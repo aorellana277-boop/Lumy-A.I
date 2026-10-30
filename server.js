@@ -619,6 +619,51 @@ app.listen(port, () => {
 });
 
 function urgentObjectAssaultReply(text) {
+  
+function urgentObjectAssaultReply(text) {
+  const normalized = normalize(text);
+
+  // Reconoce distintas maneras de describir una agresión
+  // con introducción forzada de objetos.
+  const insertionAction =
+    /\b(?:me|nos|le)\s+(?:metieron|introdujeron|insertaron|pusieron|forzaron)\b/.test(normalized);
+
+  const objectMention =
+    /\b(?:palo|escoba|objeto|barra|botella)\b/.test(normalized);
+
+  const bodyMention =
+    /\b(?:culo|ano|recto|trasero)\b/.test(normalized);
+
+  const explicitInsertion =
+    insertionAction && objectMention && bodyMention;
+
+  const assaultSignals = [
+    "me metieron una escoba",
+    "metieron una escoba",
+    "me metieron un objeto",
+    "me introdujeron un objeto",
+    "me metieron algo por el ano",
+    "me metieron algo en el ano",
+    "me metieron algo por el culo",
+    "me metieron algo en el culo",
+    "me introdujeron algo por el ano",
+    "me introdujeron algo en el culo",
+    "me metieron un palo",
+    "me introdujeron un palo",
+    "me penetraron por la fuerza",
+    "me violaron",
+    "sufri una agresion sexual",
+    "sufri abuso sexual",
+    "me hicieron algo sexual sin mi consentimiento",
+    "me tocaron sin mi consentimiento"
+  ];
+
+  if (!explicitInsertion && !includesAny(normalized, assaultSignals)) {
+    return null;
+  }
+
+  return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. No tienes que contarme detalles íntimos ni enfrentarte a la persona que te hizo daño. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. Tu seguridad es lo primero.";
+}
   const assaultSignals = [
     "me metieron una escoba",
     "metieron una escoba",

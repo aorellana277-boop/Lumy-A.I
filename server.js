@@ -617,3 +617,414 @@ app.get("/health", (_req, res) => res.json({
 app.listen(port, () => {
   console.log(`Lumy está funcionando en el puerto ${port}`);
 });
+
+function urgentObjectAssaultReply(text) {
+  const assaultSignals = [
+    "me metieron una escoba",
+    "metieron una escoba",
+    "me introdujeron una escoba",
+    "me metieron un objeto",
+    "me introdujeron un objeto",
+    "me metieron algo por el ano",
+    "me penetraron por la fuerza",
+    "me violaron",
+    "sufri una agresion sexual",
+    "sufri abuso sexual",
+    "me obligaron a tener contacto sexual",
+    "me hicieron algo sexual sin mi consentimiento",
+    "me tocaron sin mi consentimiento"
+  ];
+
+  if (!includesAny(text, assaultSignals)) return null;
+
+  return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. Si hay algún objeto que todavía no ha sido retirado, no intentes retirarlo ni manipularlo por tu cuenta: deja que te atienda personal sanitario. Aléjate de la persona que te hizo daño si puedes hacerlo de forma segura. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. No necesitas contarme detalles íntimos para merecer ayuda.";
+}
+
+const expandedBanks = {
+
+  nickname: {
+    openings: [
+      "Gracias por contarme lo que te están diciendo.",
+      "Entiendo que ese apodo te esté afectando.",
+      "Quiero que sepas que mereces respeto.",
+      "Siento que tengas que escuchar esas palabras.",
+      "Podemos hablar de esto sin repetir el insulto.",
+      "No tienes que fingir que te hace gracia.",
+      "Lo que cuentas merece ser tomado en serio.",
+      "Gracias por confiarme una situación que puede ser incómoda."
+    ],
+    validation: [
+      "Un apodo no define tu identidad ni tu valor.",
+      "No es culpa tuya que alguien decida burlarse.",
+      "Tu apariencia no justifica que te humillen.",
+      "Tienes derecho a pedir que dejen de llamarte así.",
+      "Una broma deja de serlo cuando te lastima.",
+      "No tienes que responder con otro insulto.",
+      "Mereces que utilicen el nombre que tú prefieres.",
+      "No tienes que cambiar quién eres para recibir respeto."
+    ],
+    nextSteps: [
+      "Puedes explicar a un adulto de confianza qué apodo utilizan y cuándo sucede.",
+      "Si te sientes seguro, puedes decir que no aceptas ese sobrenombre.",
+      "Pide a un docente u orientador que intervenga si continúa.",
+      "Si sucede en línea, conserva los mensajes solo si es seguro y pide ayuda para reportarlos.",
+      "Busca la compañía de alguien que te trate con respeto.",
+      "Puedes escribir lo sucedido para explicarlo con mayor tranquilidad.",
+      "No te enfrentes a varias personas por tu cuenta.",
+      "Pide que un adulto te acompañe si necesitas hablar con quienes lo hacen."
+    ],
+    questions: [
+      "¿Quién suele utilizar ese apodo?",
+      "¿Te ocurre delante de otras personas?",
+      "¿Desde hace cuánto tiempo pasa?",
+      "¿Ya le has contado esto a alguien de confianza?",
+      "¿El apodo se repite incluso después de pedir que paren?",
+      "¿Sucede en el colegio o también en internet?",
+      "¿Qué es lo que más te duele de esa situación?",
+      "¿Quieres que preparemos una manera de pedir que se detenga?"
+    ]
+  },
+
+  loneliness: {
+    openings: [
+      "Gracias por contarme cómo te sientes.",
+      "Debe ser difícil sentir que no tienes compañía.",
+      "Te leo y quiero entender lo que estás viviendo.",
+      "No tienes que ocultar que necesitas hablar con alguien.",
+      "Podemos ir despacio, sin presión.",
+      "Es importante que hayas podido expresar esto.",
+      "No estás molestando por necesitar que te escuchen.",
+      "A veces encontrar apoyo cuesta, pero mereces tenerlo."
+    ],
+    validation: [
+      "Sentirte solo no significa que no seas importante.",
+      "Mereces amistades donde puedas ser tú mismo.",
+      "No tienes que agradarle a todo el mundo.",
+      "Pedir compañía no te hace una carga.",
+      "No necesitas tener muchos amigos para merecer apoyo.",
+      "Es válido que quieras sentirte incluido.",
+      "No tienes que solucionar todos tus sentimientos hoy.",
+      "Tu necesidad de ser escuchado es importante."
+    ],
+    nextSteps: [
+      "Podrías acercarte a un familiar o docente con quien te sientas cómodo.",
+      "Intenta comenzar con una conversación pequeña con alguien amable.",
+      "Puedes pedirle a un orientador escolar un espacio para conversar.",
+      "Escribe lo que sientes y compártelo con una persona adulta segura.",
+      "Busca una actividad escolar donde puedas conocer personas con intereses similares.",
+      "No te obligues a confiar rápidamente; puedes ir conociendo a las personas poco a poco.",
+      "Piensa en alguien que alguna vez te haya escuchado sin juzgarte.",
+      "Si alguien te excluye intencionalmente, también puedes pedir apoyo a un adulto."
+    ],
+    questions: [
+      "¿Te sientes así desde hace mucho tiempo?",
+      "¿Hay alguien con quien te gustaría recuperar la comunicación?",
+      "¿Te sientes solo en el colegio o también fuera de él?",
+      "¿Qué te gustaría que cambiara en tus amistades?",
+      "¿Hay algún adulto con quien puedas conversar hoy?",
+      "¿Te cuesta acercarte a otras personas o sientes que te rechazan?",
+      "¿Qué actividad disfrutas y podrías compartir con alguien?",
+      "¿Quieres contarme qué ocurrió para que te sintieras así?"
+    ]
+  },
+
+  rumors: {
+    openings: [
+      "Gracias por contarme lo que está sucediendo.",
+      "Los rumores pueden generar mucha preocupación.",
+      "Entiendo que te afecte que otras personas hablen de ti.",
+      "Quiero ayudarte a pensar en una manera segura de manejarlo.",
+      "No tienes que enfrentar todos esos comentarios por tu cuenta.",
+      "Es difícil sentirse observado o juzgado por otros.",
+      "Lo que estás viviendo merece atención.",
+      "Podemos distinguir qué está ocurriendo y qué puedes hacer."
+    ],
+    validation: [
+      "Un rumor no demuestra que algo sea verdad.",
+      "No eres responsable de los comentarios que otras personas inventan.",
+      "Tu privacidad y dignidad merecen respeto.",
+      "No tienes que justificar cada aspecto de tu vida ante los demás.",
+      "Difundir información privada para humillar puede causar mucho daño.",
+      "No tienes que entrar en discusiones públicas para defenderte.",
+      "Mereces que te escuchen antes de sacar conclusiones.",
+      "No es necesario devolver el daño para protegerte."
+    ],
+    nextSteps: [
+      "Cuéntale a un adulto de confianza qué se está difundiendo y cómo te afecta.",
+      "Evita reenviar los rumores o compartirlos con más personas.",
+      "Si aparecen en redes, pide ayuda para reportar las publicaciones.",
+      "Conserva información relevante solo si hacerlo es seguro.",
+      "Puedes pedir a un docente que te ayude a detener la difusión en el colegio.",
+      "Habla con alguien que pueda escuchar tu versión sin juzgarte.",
+      "No publiques datos privados para intentar demostrar algo.",
+      "Pide apoyo si los rumores incluyen amenazas o información íntima."
+    ],
+    questions: [
+      "¿Los comentarios se están difundiendo en el colegio o por internet?",
+      "¿Sabes si comenzó con una persona o con varias?",
+      "¿Se está compartiendo información privada?",
+      "¿Hay amenazas relacionadas con esos rumores?",
+      "¿Algún adulto de confianza conoce la situación?",
+      "¿Qué es lo que más te preocupa que otras personas crean?",
+      "¿Quieres pensar en cómo hablar con tu tutor?",
+      "¿Te sientes seguro en el lugar donde está ocurriendo?"
+    ]
+  },
+
+  digital: {
+    openings: [
+      "Gracias por explicarme lo que ocurre en internet.",
+      "Lo que sucede en redes también puede afectar mucho.",
+      "Quiero ayudarte a encontrar una forma segura de actuar.",
+      "No tienes que soportar mensajes que te intimiden.",
+      "Es importante que podamos tomar en serio el ciberacoso.",
+      "Gracias por confiarme esta situación.",
+      "Que ocurra detrás de una pantalla no lo hace menos importante.",
+      "Vamos a pensar en los siguientes pasos."
+    ],
+    validation: [
+      "Nadie tiene derecho a amenazarte por mensajes.",
+      "No tienes que responder con insultos.",
+      "Tu privacidad debe ser respetada.",
+      "No eres culpable de recibir mensajes abusivos.",
+      "No tienes que aceptar solicitudes que te hagan sentir inseguro.",
+      "Mereces usar internet sin intimidación.",
+      "Puedes pedir ayuda aunque el mensaje ya haya sido eliminado.",
+      "No tienes que solucionar el problema enfrentando a la cuenta."
+    ],
+    nextSteps: [
+      "Pide a un adulto de confianza que te ayude a bloquear o reportar la cuenta.",
+      "Conserva los mensajes importantes si hacerlo es seguro.",
+      "Revisa tu privacidad con ayuda de una persona adulta.",
+      "No compartas contraseñas, direcciones ni información personal.",
+      "Evita entrar en discusiones que puedan aumentar el conflicto.",
+      "Si comparten imágenes privadas, pide ayuda adulta inmediatamente para reportarlo.",
+      "Si alguien se hace pasar por ti, informa a la plataforma y a un adulto seguro.",
+      "Si recibes amenazas, no te reúnas con esa persona y pide ayuda."
+    ],
+    questions: [
+      "¿Ocurre en WhatsApp, Instagram, TikTok u otra plataforma?",
+      "¿Te están enviando mensajes privados o publicando comentarios?",
+      "¿Han compartido algo personal sin tu permiso?",
+      "¿La cuenta pertenece a alguien que conoces?",
+      "¿Hay amenazas o intentos de intimidarte?",
+      "¿Tienes a un adulto que pueda ayudarte a revisar la situación?",
+      "¿Esto ocurre desde hace días o comenzó recientemente?",
+      "¿Quieres que pensemos cómo reportarlo?"
+    ]
+  },
+
+  exclusion: {
+    openings: [
+      "Siento que estés viviendo una situación de exclusión.",
+      "Gracias por contarme cómo te están tratando.",
+      "Es importante que puedas sentirte incluido y respetado.",
+      "No tienes que fingir que no te importa que te aparten.",
+      "Quiero entender mejor qué está pasando.",
+      "Lo que cuentas merece ser escuchado.",
+      "Podemos pensar en pequeños pasos para buscar apoyo.",
+      "No tienes que enfrentar esto en soledad."
+    ],
+    validation: [
+      "Mereces formar parte de un ambiente donde te respeten.",
+      "Que un grupo te excluya no determina tu valor.",
+      "No tienes que cambiar tu personalidad para ser aceptado.",
+      "Es válido que te duela sentirte apartado.",
+      "La amistad debe permitir que todos se sientan respetados.",
+      "No eres responsable de las decisiones hirientes de otras personas.",
+      "Tienes derecho a pedir ayuda cuando te aíslan intencionalmente.",
+      "No tienes que perseguir la aceptación de quienes te hacen daño."
+    ],
+    nextSteps: [
+      "Busca a una persona con quien puedas compartir el recreo o una actividad.",
+      "Puedes contarle a tu tutor cómo te está afectando la exclusión.",
+      "Intenta acercarte a compañeros que hayan mostrado amabilidad.",
+      "Pide ayuda si el aislamiento forma parte de burlas o intimidación repetida.",
+      "Puedes explicar a un adulto los momentos concretos en que te dejan fuera.",
+      "Busca un espacio escolar donde te sientas acompañado.",
+      "No te obligues a entrar en un grupo que te trata mal.",
+      "Considera pedir apoyo al orientador escolar."
+    ],
+    questions: [
+      "¿Te excluyen de actividades o también dejan de hablarte?",
+      "¿Sucede con un grupo específico?",
+      "¿Desde cuándo notas ese comportamiento?",
+      "¿Hay alguien en el colegio con quien sí te sientas cómodo?",
+      "¿Has podido hablar de esto con un adulto?",
+      "¿Te excluyen de manera intencional o no sabes qué está pasando?",
+      "¿Qué momento del día te resulta más difícil?",
+      "¿Quieres que pensemos cómo acercarte a alguien de confianza?"
+    ]
+  },
+
+  friend: {
+    openings: [
+      "Es valioso que quieras acompañar a tu amigo.",
+      "Gracias por preocuparte por otra persona.",
+      "Podemos pensar en una forma segura de ayudar.",
+      "Tu interés por escucharle puede ser importante.",
+      "No tienes que resolver tú solo lo que está ocurriendo.",
+      "Es bueno que busques orientación antes de actuar.",
+      "Tu amigo merece sentirse escuchado.",
+      "Vamos a considerar qué puede ayudarle sin ponerlos en peligro."
+    ],
+    validation: [
+      "Escuchar sin juzgar puede ser un primer paso.",
+      "No le culpes por lo que le está sucediendo.",
+      "Respeta su privacidad y evita difundir lo que te cuenta.",
+      "No prometas guardar secretos cuando exista peligro.",
+      "No necesitas enfrentarte a quien lo está intimidando.",
+      "Recuérdale que merece respeto y apoyo.",
+      "Puedes acompañarle sin presionarle para que cuente todo.",
+      "También es válido que tú pidas orientación adulta."
+    ],
+    nextSteps: [
+      "Ofrécele acompañarle a hablar con un docente de confianza.",
+      "Pregúntale qué apoyo necesita y escucha su respuesta.",
+      "Si hay peligro inmediato, avisa a un adulto aunque te haya pedido guardar silencio.",
+      "No difundas capturas ni detalles de su historia.",
+      "Puedes decirle que no tiene que afrontar la situación sin compañía.",
+      "Anímale a contar lo ocurrido a un familiar seguro.",
+      "Si no sabes qué hacer, pide orientación a un adulto.",
+      "Si la situación ocurre en línea, ayúdale a pedir apoyo para reportarla."
+    ],
+    questions: [
+      "¿Tu amigo está a salvo ahora mismo?",
+      "¿Él o ella sabe que quieres ayudarle?",
+      "¿Ha podido hablar con un adulto de confianza?",
+      "¿Quieres que preparemos una frase para ofrecerle compañía?",
+      "¿La situación sucede en el colegio o por internet?",
+      "¿Hay amenazas o agresiones?",
+      "¿Te preocupa que pueda estar en peligro?",
+      "¿Qué es lo que más necesita de ti en este momento?"
+    ]
+  },
+
+  teacher: {
+    openings: [
+      "Gracias por contarme algo tan delicado.",
+      "Quiero tomar en serio lo que estás explicando.",
+      "Siento que estés pasando por esta situación con un adulto del colegio.",
+      "Mereces sentirte seguro en tu centro educativo.",
+      "Es importante que otra persona adulta pueda escucharte.",
+      "No tienes que resolver esto sin ayuda.",
+      "Gracias por confiarme lo que ocurre.",
+      "Podemos pensar en cómo encontrar apoyo fuera de esa situación."
+    ],
+    validation: [
+      "Tener autoridad no le da permiso a una persona para intimidarte.",
+      "No es tu culpa si un adulto cruza tus límites.",
+      "Tienes derecho a que te traten con respeto.",
+      "No tienes que guardar secretos que te hacen sentir inseguro.",
+      "Tu relato merece ser escuchado sin presiones.",
+      "No tienes que enfrentarte a esa persona por tu cuenta.",
+      "Puedes pedir ayuda incluso si no sabes cómo describir exactamente lo sucedido.",
+      "No estás haciendo nada malo al contar lo que te preocupa."
+    ],
+    nextSteps: [
+      "Habla cuanto antes con un familiar o adulto seguro que no esté implicado.",
+      "Busca a un orientador o responsable de protección distinto de la persona señalada.",
+      "No te quedes a solas con esa persona para resolver el problema.",
+      "Pide a un adulto de confianza que te acompañe al hablar del tema.",
+      "Si hay mensajes, consérvalos solo si es seguro y muéstralos a una persona adulta.",
+      "Si la primera persona no te escucha, busca otro adulto seguro.",
+      "No investigues ni intentes obtener pruebas exponiéndote a más riesgos.",
+      "Si te sientes en peligro ahora, busca compañía y ayuda inmediata."
+    ],
+    questions: [
+      "¿Estás a salvo ahora mismo?",
+      "¿Hay un familiar que pueda acompañarte?",
+      "¿Existe otro docente con quien sí te sientas seguro?",
+      "¿Te preocupa volver a estar a solas con esa persona?",
+      "¿Ocurre durante las clases o fuera del horario escolar?",
+      "¿Quieres ayuda para escribir un mensaje a un familiar?",
+      "¿Puedes acudir a una persona adulta que no esté implicada?",
+      "¿Necesitas ayuda inmediata para estar en un lugar seguro?"
+    ]
+  },
+
+  conflict: {
+    openings: [
+      "Gracias por explicar lo que pasó.",
+      "Los conflictos pueden ser difíciles de manejar.",
+      "Quiero entender las dos partes de la situación sin juzgarte.",
+      "Podemos buscar una manera respetuosa de abordar el problema.",
+      "Es positivo que quieras encontrar una solución.",
+      "Vamos a separar lo que ocurrió de cómo te hizo sentir.",
+      "No tienes que resolverlo en medio del enojo.",
+      "Podemos pensar en una respuesta que no empeore las cosas."
+    ],
+    validation: [
+      "Tus sentimientos importan, incluso cuando existe un desacuerdo.",
+      "No es necesario responder con agresiones para defender tu punto de vista.",
+      "Tienes derecho a expresar tus límites con respeto.",
+      "Escuchar a otra persona no significa aceptar malos tratos.",
+      "Un desacuerdo no justifica amenazas ni humillaciones.",
+      "Puedes pedir tiempo antes de continuar una conversación difícil.",
+      "No tienes que aceptar una discusión que te haga sentir inseguro.",
+      "Buscar apoyo para resolver un conflicto es válido."
+    ],
+    nextSteps: [
+      "Cuando ambos estén tranquilos, puedes explicar qué te molestó.",
+      "Intenta hablar de lo ocurrido sin insultos ni amenazas.",
+      "Si no pueden dialogar con calma, pide mediación de un adulto neutral.",
+      "Puedes escribir tus ideas antes de hablar.",
+      "Escucha la otra versión sin abandonar tus propios límites.",
+      "Si aparecen amenazas o agresiones, busca ayuda adulta.",
+      "No difundas el conflicto en redes para conseguir apoyo.",
+      "Puedes pedir una pausa si la conversación se vuelve demasiado intensa."
+    ],
+    questions: [
+      "¿Qué ocurrió antes de que comenzara la discusión?",
+      "¿Qué te gustaría que cambiara?",
+      "¿Ambos han podido explicar cómo se sienten?",
+      "¿Se trata de un desacuerdo o hay intimidación repetida?",
+      "¿Te sientes seguro al hablar con esa persona?",
+      "¿Hay un adulto neutral que pueda ayudar?",
+      "¿Qué resultado te parecería justo?",
+      "¿Quieres que pensemos en cómo expresar lo que necesitas?"
+    ]
+  }
+};
+
+function detectExpandedTopic(text) {
+  if (isAuthorityConcern(text)) return "teacher";
+  if (isLoneliness(text)) return "loneliness";
+  if (isFriendSupport(text)) return "friend";
+
+  if (hasNickname(text)) return "nickname";
+
+  if (includesAny(text, [
+    "inventan cosas de mi", "hablan mal de mi", "difunden rumores",
+    "chismes sobre mi", "estan hablando de mi", "dicen mentiras de mi",
+    "publicaron rumores", "me acusan de algo que no hice",
+    "comparten informacion privada", "estan difundiendo cosas"
+  ])) return "rumors";
+
+  if (includesAny(text, [
+    "whatsapp", "instagram", "tiktok", "redes sociales",
+    "grupo de chat", "chat del colegio", "me mandan mensajes",
+    "publicaron una foto", "subieron una foto", "cuenta falsa",
+    "me amenazan por internet", "me escriben por redes"
+  ]) && includesAny(text, [
+    "molestan", "acoso", "insultan", "burlan", "amenazan",
+    "foto", "mensaje", "humillan", "excluyen", "difunden",
+    "me hacen", "me escriben"
+  ])) return "digital";
+
+  if (includesAny(text, [
+    "me dejan fuera", "no me invitan", "me excluyen",
+    "no me incluyen", "me ignoran", "me apartan",
+    "nadie quiere sentarse conmigo", "no me dejan participar",
+    "me dejan solo en el recreo", "me dejan sola en el recreo"
+  ])) return "exclusion";
+
+  if (includesAny(text, [
+    "discuti con", "discutimos", "tuvimos una pelea",
+    "me enoje con", "esta enojado conmigo", "esta enojada conmigo",
+    "nos llevamos mal", "no nos entendemos", "tuvimos un problema",
+    "quiero solucionar un conflicto", "me pelee con"
+  ])) return "conflict";
+
+  return null;
+}

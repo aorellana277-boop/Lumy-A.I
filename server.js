@@ -36,9 +36,9 @@ app.use("/api/", rateLimit({
 
 app.use(express.static("public"));
 
-// CHATBOT DE CONTIGO: RESPUESTAS PROGRAMADAS
+// CHATBOT DE Lumy: RESPUESTAS PROGRAMADAS
 
-function responderContigo(mensaje) {
+function responderLumy(mensaje) {
   const texto = mensaje
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -71,7 +71,7 @@ function responderContigo(mensaje) {
 
   // Saludos
   if (/^(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|holi)/.test(texto)) {
-    return "¡Hola! 💙 Soy Contigo. Estoy aquí para orientarte sobre bullying, convivencia escolar y cómo ayudar a alguien. ¿Sobre qué tema te gustaría conversar?";
+    return "¡Hola! 💙 Soy Lumy. Estoy aquí para orientarte sobre bullying, convivencia escolar y cómo ayudar a alguien. ¿Sobre qué tema te gustaría conversar?";
   }
 
   // Necesidad de hablar
@@ -90,7 +90,7 @@ function responderContigo(mensaje) {
   }
 
   // Respuesta general
-  return "Gracias por escribir a Contigo 💙. Puedo orientarte sobre bullying, acoso escolar, convivencia y cómo ayudar a un amigo. Prueba escribiendo: «¿Qué es el bullying?», «Me molestan en el colegio» o «Quiero ayudar a un amigo».";
+  return "Puedo orientarte sobre bullying, acoso escolar, convivencia y cómo ayudar a un amigo. Prueba escribiendo: «¿Qué es el bullying?», «Me molestan en el colegio» o «Quiero ayudar a un amigo».";
 }
 
 // RUTA DEL CHATBOT
@@ -122,7 +122,7 @@ app.post("/api/chat", (req, res) => {
       });
     }
 
-    const reply = responderContigo(
+    const reply = responderLumy(
       ultimoMensaje.content.slice(0, 1200)
     );
 
@@ -140,5 +140,5 @@ app.post("/api/chat", (req, res) => {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.listen(port, () => {
-  console.log(`Contigo está funcionando en el puerto ${port}`);
+  console.log(`Lumy está funcionando en el puerto ${port}`);
 });

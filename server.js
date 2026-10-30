@@ -619,8 +619,6 @@ app.listen(port, () => {
 });
 
 function urgentObjectAssaultReply(text) {
-  
-function urgentObjectAssaultReply(text) {
   const normalized = normalize(text);
 
   // Reconoce distintas maneras de describir una agresión
@@ -684,7 +682,6 @@ function urgentObjectAssaultReply(text) {
 
   return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. Si hay algún objeto que todavía no ha sido retirado, no intentes retirarlo ni manipularlo por tu cuenta: deja que te atienda personal sanitario. Aléjate de la persona que te hizo daño si puedes hacerlo de forma segura. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. No necesitas contarme detalles íntimos para merecer ayuda.";
 }
-
 const expandedBanks = {
 
   nickname: {

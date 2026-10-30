@@ -1023,7 +1023,6 @@ function detectExpandedTopic(text) {
     "discuti con", "discutimos", "tuvimos una pelea",
     "me enoje con", "esta enojado conmigo", "esta enojada conmigo",
     "nos llevamos mal", "no nos entendemos", "tuvimos un problema",
-    
     "quiero solucionar un conflicto", "me pelee con"
   ])) return "conflict";
 

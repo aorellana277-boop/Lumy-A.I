@@ -662,26 +662,6 @@ function urgentObjectAssaultReply(text) {
 
   return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. No tienes que contarme detalles íntimos ni enfrentarte a la persona que te hizo daño. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. Tu seguridad es lo primero.";
 }
-  const assaultSignals = [
-    "me metieron una escoba",
-    "metieron una escoba",
-    "me introdujeron una escoba",
-    "me metieron un objeto",
-    "me introdujeron un objeto",
-    "me metieron algo por el ano",
-    "me penetraron por la fuerza",
-    "me violaron",
-    "sufri una agresion sexual",
-    "sufri abuso sexual",
-    "me obligaron a tener contacto sexual",
-    "me hicieron algo sexual sin mi consentimiento",
-    "me tocaron sin mi consentimiento"
-  ];
-
-  if (!includesAny(text, assaultSignals)) return null;
-
-  return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. Si hay algún objeto que todavía no ha sido retirado, no intentes retirarlo ni manipularlo por tu cuenta: deja que te atienda personal sanitario. Aléjate de la persona que te hizo daño si puedes hacerlo de forma segura. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. No necesitas contarme detalles íntimos para merecer ayuda.";
-}
 const expandedBanks = {
 
   nickname: {

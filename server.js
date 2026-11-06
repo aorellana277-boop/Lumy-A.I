@@ -1098,4 +1098,3 @@ const extraBanks = {
       TOPIC_SIGNALS[topic].push(...additions);
     }
   }
-}

@@ -1086,7 +1086,7 @@ function lumyPlusReply(messages) {
   // Respuesta de respaldo: tampoco termina con una pregunta.
   return null;
 
-function respond(messages) {}
+function respond(messages) {
   const userMessages = messages.filter(message => message.role === "user").map(message => message.content);
   const current = userMessages[userMessages.length - 1] || "";
   const currentText = normalize(current);
@@ -1096,7 +1096,7 @@ function respond(messages) {}
   const seed = `${conversationSeed}|variation:${++responseSequence}`;
   const recentUserMessages = userMessages.slice(-6);
   const recentText = normalize(recentUserMessages.join(" "));
-  const name = findRecentPersonName(recentUserMessages);
+  const name = findRecentPersonName(recentUserMessages);}
 
   // Primero se atienden las señales de mayor prioridad.
   const crisis = crisisReply(normalize(userMessages.slice(-3).join(" ")));

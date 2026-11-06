@@ -1086,7 +1086,7 @@ function lumyPlusReply(messages) {
   // Respuesta de respaldo: tampoco termina con una pregunta.
   return null;
 
-function respond(messages) {
+function respond(messages) {}
   const userMessages = messages.filter(message => message.role === "user").map(message => message.content);
   const current = userMessages[userMessages.length - 1] || "";
   const currentText = normalize(current);

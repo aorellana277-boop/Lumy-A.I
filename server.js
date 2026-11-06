@@ -100,7 +100,7 @@ function cleanFirstName(raw) {
 
 function extractName(message = "") {
   const patterns = [
-    /\b(?:persona|companero|companera|amigo|amiga|profesor|profesora|profe|docente|maestro|maestra)\s+(?:llamado|llamada|de nombre|que se llama)\s+([a-zñü]{2,20})\b/i,
+    /\b(?:persona|compañero|compañera|amigo|amiga|profesor|profesora|profe|docente|maestro|maestra)\s+(?:llamado|llamada|de nombre|que se llama)\s+([a-zñü]{2,20})\b/i,
     /\b(?:se llama|le dicen|de nombre)\s+([a-zñü]{2,20})\b/i,
     /\b(?:mi companero|mi companera|mi amigo|mi amiga|esta persona|esa persona)\s*,?\s+([A-ZÑÜ][a-zñü]{1,19})\b/,
     /^\s*([A-ZÑÜ][a-zñü]{1,19})\s+(?:me|nos)\s+(?:molesta|insulta|humilla|amenaza|excluye|acosa)\b/
@@ -410,6 +410,8 @@ const BANKS = {
 
   conflict: {
     a: [
+      "esto es un tema serio si te hicieron este dañño de gran magnitud habla con un profesional, primero no trates de alterarte eso lo hara peor, intenta llamar a un adulto de confianza"
+    
       "Gracias por explicar lo que ocurrió.",
       "Los desacuerdos pueden ser difíciles de manejar.",
       "Es positivo que quieras encontrar una salida respetuosa."

@@ -2,7 +2,7 @@
 
 ## Qué incluye
 - `public/index.html`: interfaz Contigo con tus imágenes y colores.
-- `server.js`: servidor que llama a la API de OpenAI sin exponer la clave en el navegador.
+- `server.js`: servidor local sin API ni equipos
 - `package.json`: dependencias y comando de inicio.
 
 ## Ejecutarlo localmente

@@ -1,7 +1,6 @@
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { applyLumyExtras } from "./lumy-respuestas-extra.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -516,215 +515,11 @@ const TOPIC_SIGNALS = {
   discrimination: ["racismo", "racista", "discriminan", "discriminacion", "por mi color de piel", "por mi origen", "por mi nacionalidad", "por mi discapacidad", "por mi religion", "por mi idioma", "por mi acento"],
   conflict: ["discuti con", "discutimos", "tuvimos una pelea", "me pelee con", "nos llevamos mal", "no nos entendemos", "tuvimos un problema", "estamos enojados", "quiero solucionar un conflicto"]
 };
-applyLumyExtras(BANKS, TOPIC_SIGNALS);
 
-function detectTopic(text) {
-  if (
-    hasAny(text, TOPIC_SIGNALS.teacher.people) &&
-    hasAny(text, TOPIC_SIGNALS.teacher.actions)
-  ) return "teacher";
+// Respuestas adicionales integradas directamente en este server.js.
 
-  if (hasAny(text, ["mi amigo", "mi amiga", "ayudar a un amigo", "ayudar a una amiga", "un compañero", "una compañera"]) &&
-      hasAny(text, ["bullying", "acoso", "molestan", "insultan", "golpean", "excluyen", "ayudar", "tiene miedo", "esta triste", "le pegan"])) {
-    return "friend";
-  }
-
-  if (hasAny(text, TOPIC_SIGNALS.discrimination)) return "discrimination";
-  if (hasAny(text, TOPIC_SIGNALS.rumors)) return "rumors";
-
-  const onlineContext = hasAny(text, [
-    "whatsapp", "instagram", "tiktok", "facebook", "redes sociales",
-    "grupo de chat", "chat", "internet", "publicaron una foto",
-    "subieron una foto", "cuenta falsa", "me escriben por redes"
-  ]);
-  const onlineAction = hasAny(text, [
-    "molestan", "acoso", "insultan", "burlan", "amenazan",
-    "humillan", "excluyen", "difunden", "mensajes", "publican", "me escriben"
-  ]);
-  if (onlineContext && onlineAction) return "cyber";
-
-  if (hasAny(text, TOPIC_SIGNALS.nickname)) return "nickname";
-  if (hasAny(text, TOPIC_SIGNALS.exclusion)) return "exclusion";
-  if (hasAny(text, TOPIC_SIGNALS.loneliness)) return "loneliness";
-  if (hasAny(text, TOPIC_SIGNALS.conflict)) return "conflict";
-
-  if (hasAny(text, ["me golpean", "me pegan", "me empujan", "me patean", "me agreden", "me pegaron", "me golpearon", "me empujaron", "me patearon", "me tiraron al suelo"])) {
-    return "physical";
-  }
-
-  if (hasAny(text, ["me amenazan", "me persiguen", "me esperan afuera", "me quieren hacer daño", "me quieren hacer dano", "me intimidan", "me chantajean"])) {
-    return "threat";
-  }
-
-  if (hasAny(text, ["bullying", "acoso escolar", "me molestan", "me hostigan", "me intimidan", "me tratan mal", "me hacen la vida imposible", "me persiguen en el colegio"])) {
-    return "bullying";
-  }
-
-  return null;
-}
-
-function isImmediateDanger(text) {
-  return hasAny(text, [
-    "estoy en peligro ahora", "me estan golpeando ahora",
-    "me esta pegando ahora", "me amenaza ahora",
-    "esta aqui y me amenaza", "no me deja salir",
-    "me esta siguiendo ahora", "tengo miedo de que me haga daño ahora",
-    "tengo miedo de que me haga dano ahora"
-  ]);
-}
-
-function isSexualAbuseConcern(text) {
-  return hasAny(text, [
-    "me tocaron sin permiso", "me tocaron sin mi consentimiento",
-    "me obligaron a un contacto sexual", "sufri abuso sexual",
-    "sufri una agresion sexual", "me hicieron algo sexual sin mi consentimiento",
-    "un adulto me pide fotos intimas", "me pide fotos intimas",
-    "me pide que guarde nuestro secreto", "me obliga a enviar fotos"
-  ]);
-}
-
-function crisisReply(text) {
-  const deniesRisk = /\bno\s+(?:quiero|pienso|voy a)\s+(?:suicidarme|matarme|quitarme la vida|hacerme dano)\b/.test(text);
-  const risk = !deniesRisk && hasAny(text, [
-    "quiero suicidarme", "quiero matarme", "quiero quitarme la vida",
-    "no quiero seguir viviendo", "no quiero vivir",
-    "quiero acabar con mi vida", "quiero hacerme daño",
-    "quiero hacerme dano", "voy a lastimarme", "me voy a lastimar",
-    "no puedo evitar hacerme daño", "no puedo evitar hacerme dano"
-  ]);
-
-  if (risk) {
-    return "Gracias por confiarme algo tan importante. Siento mucho que estés pasando por un momento así. No tienes que afrontarlo a solas: busca ahora mismo a un adulto de confianza y dile claramente que necesitas ayuda para mantenerte a salvo. Quédate acompañado y, si el peligro es inmediato, pide ayuda a los servicios de emergencia de tu zona. También puedes mostrarle este mensaje. Mereces apoyo y atención ahora.";
-  }
-  return null;
-}
-
-function specialSafetyReply(text) {
-  if (isSexualAbuseConcern(text)) {
-    return "Lo que describes es grave y no es tu culpa. Busca ahora mismo a un adulto de confianza que no esté implicado y pídele que te acompañe a recibir ayuda. No tienes que contarme detalles íntimos ni enfrentarte a esa persona. Si estás en peligro inmediato, ve hacia un lugar seguro con otras personas y pide ayuda de emergencia. Mereces protección y que te escuchen.";
-  }
-
-  if (isImmediateDanger(text)) {
-    return "Tu seguridad es lo primero. Si puedes hacerlo sin aumentar el peligro, ve hacia un lugar donde haya otras personas y busca inmediatamente a un adulto de confianza. No te enfrentes a quien te amenaza. Si el peligro es inmediato, pide ayuda a los servicios de emergencia de tu zona. No esperes a que este chat resuelva la situación.";
-  }
-
-  return null;
-}
-
-// -----------------------------------------------------------------------------
-// Respuesta principal
-// -----------------------------------------------------------------------------
-
-function respond(messages) {
-  const currentMessage = [...messages].reverse().find((message) => message.role === "user");
-  const current = normalize(currentMessage?.content || "");
-  const context = normalize(recentUserText(messages, 5));
-  const name = recentName(messages);
-
-  const crisis = crisisReply(context);
-  if (crisis) return crisis;
-
-  const urgent = specialSafetyReply(context);
-  if (urgent) return urgent;
-
-  if (/^(hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(current) && current.length < 55) {
-    return choose([
-      "¡Hola! Soy Lumy 💙. Puedo orientarte sobre bullying, convivencia escolar, amistades y formas seguras de pedir ayuda. Puedes escribir con tus propias palabras y sin compartir datos personales.",
-      "¡Hola! Qué bueno que estés aquí. Este es un espacio de orientación sobre respeto, convivencia y situaciones difíciles. Tu bienestar importa.",
-      "¡Hola! Soy Lumy. Puedes contarme qué te preocupa; intentaré darte una orientación clara y respetuosa."
-    ]);
-  }
-
-  if (hasAny(current, ["gracias", "muchas gracias", "te agradezco"])) {
-    return choose([
-      "De nada. Recuerda que mereces respeto y apoyo también fuera de este chat.",
-      "Me alegra que hayas encontrado orientación. No tienes que afrontar una situación difícil sin apoyo humano.",
-      "Gracias por confiar en Lumy. Tu bienestar y tu seguridad importan."
-    ]);
-  }
-
-  if (hasAny(current, ["que es bullying", "que significa bullying", "tipos de bullying", "como reconocer el bullying", "como saber si es bullying", "que es el acoso escolar"])) {
-    return "El bullying o acoso escolar es una conducta de intimidación que suele repetirse y puede incluir burlas, insultos, exclusión, amenazas o agresiones. También puede ocurrir por internet. Un desacuerdo aislado no siempre es bullying, pero cualquier situación que te haga sentir inseguro merece atención. Si te está pasando, puedes pedir apoyo a un adulto de confianza.";
-  }
-
-  if (hasAny(current, ["que puedo hacer", "como puedo responder", "que le digo", "como hago para que pare", "como lo soluciono", "no se que hacer"])) {
-    return "Puedes empezar por tres pasos: 1) prioriza tu seguridad y evita enfrentarte a alguien que te intimida; 2) cuéntale a un adulto de confianza qué ocurrió y cómo te afecta; 3) pide que te acompañe a buscar una solución en el colegio. No tienes que resolverlo todo por tu cuenta.";
-  }
-
-  const topic = detectTopic(context);
-  if (topic) return buildReply(topic, name);
-
-  return choose([
-    "Gracias por escribir a Lumy. Puedo orientarte sobre bullying, ciberacoso, convivencia escolar, amistades y cómo pedir ayuda. Explica la situación con tus propias palabras; no necesitas compartir nombres completos, direcciones ni el nombre de tu colegio.",
-    "Tu preocupación merece una respuesta respetuosa. Si se relaciona con algo que ocurre en el colegio, puedes contarle a un familiar, tutor u orientador de confianza. Lumy puede ayudarte a ordenar ideas y pensar en pasos seguros.",
-    "Estoy aquí para ofrecer orientación inicial sobre convivencia y situaciones difíciles. No reemplazo la ayuda de una persona adulta, pero puedo ayudarte a identificar opciones seguras. Puedes explicar qué necesitas sin compartir datos personales."
-  ]);
-}
-
-// -----------------------------------------------------------------------------
-// Rutas
-// -----------------------------------------------------------------------------
-
-app.post("/api/chat", (req, res) => {
-  try {
-    const incoming = req.body?.messages;
-
-    if (!Array.isArray(incoming) || incoming.length === 0 || incoming.length > 20) {
-      return res.status(400).json({
-        error: "Formato de conversación no válido. Envía una lista de mensajes."
-      });
-    }
-
-    const messages = incoming.map((message) => {
-      if (
-        !message ||
-        !["user", "assistant"].includes(message.role) ||
-        typeof message.content !== "string"
-      ) {
-        throw new Error("Mensaje no válido.");
-      }
-
-      return {
-        role: message.role,
-        content: message.content.slice(0, 1500)
-      };
-    });
-
-    if (!messages.some((message) => message.role === "user")) {
-      return res.status(400).json({
-        error: "No se encontró un mensaje del estudiante."
-      });
-    }
-
-    const reply = respond(messages);
-    return res.json({ reply });
-  } catch (error) {
-    console.error("Error en /api/chat:", error?.message || "Error desconocido");
-    return res.status(400).json({
-      error: "No se pudo procesar el mensaje. Inténtalo de nuevo."
-    });
-  }
-});
-
-app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    chatbot: "Lumy local",
-    openaiRequired: false,
-    apiRoute: "/api/chat"
-  });
-});
-
-// Ruta final para errores de JSON y otras solicitudes incorrectas.
-app.use((error, _req, res, _next) => {
-  console.error("Error del servidor:", error?.message || "Error desconocido");
-  res.status(400).json({ error: "La solicitud no pudo procesarse." });
-});
-
-app.listen(PORT, () => {
-  console.log(`Lumy está funcionando en el puerto ${PORT}`);
-});
-const extraBanks = {
+function applyLumyExtras(BANKS, TOPIC_SIGNALS) {
+  const extraBanks = {
     bullying: {
       a: [
         "Gracias por explicarlo con tus propias palabras; voy a tomar en serio lo que cuentas.",
@@ -1098,3 +893,215 @@ const extraBanks = {
       TOPIC_SIGNALS[topic].push(...additions);
     }
   }
+}
+
+
+// Integrar respuestas y expresiones adicionales antes de detectar temas.
+applyLumyExtras(BANKS, TOPIC_SIGNALS);
+
+function detectTopic(text) {
+  if (
+    hasAny(text, TOPIC_SIGNALS.teacher.people) &&
+    hasAny(text, TOPIC_SIGNALS.teacher.actions)
+  ) return "teacher";
+
+  if (hasAny(text, ["mi amigo", "mi amiga", "ayudar a un amigo", "ayudar a una amiga", "un compañero", "una compañera"]) &&
+      hasAny(text, ["bullying", "acoso", "molestan", "insultan", "golpean", "excluyen", "ayudar", "tiene miedo", "esta triste", "le pegan"])) {
+    return "friend";
+  }
+
+  if (hasAny(text, TOPIC_SIGNALS.discrimination)) return "discrimination";
+  if (hasAny(text, TOPIC_SIGNALS.rumors)) return "rumors";
+
+  const onlineContext = hasAny(text, [
+    "whatsapp", "instagram", "tiktok", "facebook", "redes sociales",
+    "grupo de chat", "chat", "internet", "publicaron una foto",
+    "subieron una foto", "cuenta falsa", "me escriben por redes"
+  ]);
+  const onlineAction = hasAny(text, [
+    "molestan", "acoso", "insultan", "burlan", "amenazan",
+    "humillan", "excluyen", "difunden", "mensajes", "publican", "me escriben"
+  ]);
+  if (onlineContext && onlineAction) return "cyber";
+
+  if (hasAny(text, TOPIC_SIGNALS.nickname)) return "nickname";
+  if (hasAny(text, TOPIC_SIGNALS.exclusion)) return "exclusion";
+  if (hasAny(text, TOPIC_SIGNALS.loneliness)) return "loneliness";
+  if (hasAny(text, TOPIC_SIGNALS.conflict)) return "conflict";
+
+  if (hasAny(text, ["me golpean", "me pegan", "me empujan", "me patean", "me agreden", "me pegaron", "me golpearon", "me empujaron", "me patearon", "me tiraron al suelo"])) {
+    return "physical";
+  }
+
+  if (hasAny(text, ["me amenazan", "me persiguen", "me esperan afuera", "me quieren hacer daño", "me quieren hacer dano", "me intimidan", "me chantajean"])) {
+    return "threat";
+  }
+
+  if (hasAny(text, ["bullying", "acoso escolar", "me molestan", "me hostigan", "me intimidan", "me tratan mal", "me hacen la vida imposible", "me persiguen en el colegio"])) {
+    return "bullying";
+  }
+
+  return null;
+}
+
+function isImmediateDanger(text) {
+  return hasAny(text, [
+    "estoy en peligro ahora", "me estan golpeando ahora",
+    "me esta pegando ahora", "me amenaza ahora",
+    "esta aqui y me amenaza", "no me deja salir",
+    "me esta siguiendo ahora", "tengo miedo de que me haga daño ahora",
+    "tengo miedo de que me haga dano ahora"
+  ]);
+}
+
+function isSexualAbuseConcern(text) {
+  return hasAny(text, [
+    "me tocaron sin permiso", "me tocaron sin mi consentimiento",
+    "me obligaron a un contacto sexual", "sufri abuso sexual",
+    "sufri una agresion sexual", "me hicieron algo sexual sin mi consentimiento",
+    "un adulto me pide fotos intimas", "me pide fotos intimas",
+    "me pide que guarde nuestro secreto", "me obliga a enviar fotos"
+  ]);
+}
+
+function crisisReply(text) {
+  const deniesRisk = /\bno\s+(?:quiero|pienso|voy a)\s+(?:suicidarme|matarme|quitarme la vida|hacerme dano)\b/.test(text);
+  const risk = !deniesRisk && hasAny(text, [
+    "quiero suicidarme", "quiero matarme", "quiero quitarme la vida",
+    "no quiero seguir viviendo", "no quiero vivir",
+    "quiero acabar con mi vida", "quiero hacerme daño",
+    "quiero hacerme dano", "voy a lastimarme", "me voy a lastimar",
+    "no puedo evitar hacerme daño", "no puedo evitar hacerme dano"
+  ]);
+
+  if (risk) {
+    return "Gracias por confiarme algo tan importante. Siento mucho que estés pasando por un momento así. No tienes que afrontarlo a solas: busca ahora mismo a un adulto de confianza y dile claramente que necesitas ayuda para mantenerte a salvo. Quédate acompañado y, si el peligro es inmediato, pide ayuda a los servicios de emergencia de tu zona. También puedes mostrarle este mensaje. Mereces apoyo y atención ahora.";
+  }
+  return null;
+}
+
+function specialSafetyReply(text) {
+  if (isSexualAbuseConcern(text)) {
+    return "Lo que describes es grave y no es tu culpa. Busca ahora mismo a un adulto de confianza que no esté implicado y pídele que te acompañe a recibir ayuda. No tienes que contarme detalles íntimos ni enfrentarte a esa persona. Si estás en peligro inmediato, ve hacia un lugar seguro con otras personas y pide ayuda de emergencia. Mereces protección y que te escuchen.";
+  }
+
+  if (isImmediateDanger(text)) {
+    return "Tu seguridad es lo primero. Si puedes hacerlo sin aumentar el peligro, ve hacia un lugar donde haya otras personas y busca inmediatamente a un adulto de confianza. No te enfrentes a quien te amenaza. Si el peligro es inmediato, pide ayuda a los servicios de emergencia de tu zona. No esperes a que este chat resuelva la situación.";
+  }
+
+  return null;
+}
+
+// -----------------------------------------------------------------------------
+// Respuesta principal
+// -----------------------------------------------------------------------------
+
+function respond(messages) {
+  const currentMessage = [...messages].reverse().find((message) => message.role === "user");
+  const current = normalize(currentMessage?.content || "");
+  const context = normalize(recentUserText(messages, 5));
+  const name = recentName(messages);
+
+  const crisis = crisisReply(context);
+  if (crisis) return crisis;
+
+  const urgent = specialSafetyReply(context);
+  if (urgent) return urgent;
+
+  if (/^(hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(current) && current.length < 55) {
+    return choose([
+      "¡Hola! Soy Lumy 💙. Puedo orientarte sobre bullying, convivencia escolar, amistades y formas seguras de pedir ayuda. Puedes escribir con tus propias palabras y sin compartir datos personales.",
+      "¡Hola! Qué bueno que estés aquí. Este es un espacio de orientación sobre respeto, convivencia y situaciones difíciles. Tu bienestar importa.",
+      "¡Hola! Soy Lumy. Puedes contarme qué te preocupa; intentaré darte una orientación clara y respetuosa."
+    ]);
+  }
+
+  if (hasAny(current, ["gracias", "muchas gracias", "te agradezco"])) {
+    return choose([
+      "De nada. Recuerda que mereces respeto y apoyo también fuera de este chat.",
+      "Me alegra que hayas encontrado orientación. No tienes que afrontar una situación difícil sin apoyo humano.",
+      "Gracias por confiar en Lumy. Tu bienestar y tu seguridad importan."
+    ]);
+  }
+
+  if (hasAny(current, ["que es bullying", "que significa bullying", "tipos de bullying", "como reconocer el bullying", "como saber si es bullying", "que es el acoso escolar"])) {
+    return "El bullying o acoso escolar es una conducta de intimidación que suele repetirse y puede incluir burlas, insultos, exclusión, amenazas o agresiones. También puede ocurrir por internet. Un desacuerdo aislado no siempre es bullying, pero cualquier situación que te haga sentir inseguro merece atención. Si te está pasando, puedes pedir apoyo a un adulto de confianza.";
+  }
+
+  if (hasAny(current, ["que puedo hacer", "como puedo responder", "que le digo", "como hago para que pare", "como lo soluciono", "no se que hacer"])) {
+    return "Puedes empezar por tres pasos: 1) prioriza tu seguridad y evita enfrentarte a alguien que te intimida; 2) cuéntale a un adulto de confianza qué ocurrió y cómo te afecta; 3) pide que te acompañe a buscar una solución en el colegio. No tienes que resolverlo todo por tu cuenta.";
+  }
+
+  const topic = detectTopic(context);
+  if (topic) return buildReply(topic, name);
+
+  return choose([
+    "Gracias por escribir a Lumy. Puedo orientarte sobre bullying, ciberacoso, convivencia escolar, amistades y cómo pedir ayuda. Explica la situación con tus propias palabras; no necesitas compartir nombres completos, direcciones ni el nombre de tu colegio.",
+    "Tu preocupación merece una respuesta respetuosa. Si se relaciona con algo que ocurre en el colegio, puedes contarle a un familiar, tutor u orientador de confianza. Lumy puede ayudarte a ordenar ideas y pensar en pasos seguros.",
+    "Estoy aquí para ofrecer orientación inicial sobre convivencia y situaciones difíciles. No reemplazo la ayuda de una persona adulta, pero puedo ayudarte a identificar opciones seguras. Puedes explicar qué necesitas sin compartir datos personales."
+  ]);
+}
+
+// -----------------------------------------------------------------------------
+// Rutas
+// -----------------------------------------------------------------------------
+
+app.post("/api/chat", (req, res) => {
+  try {
+    const incoming = req.body?.messages;
+
+    if (!Array.isArray(incoming) || incoming.length === 0 || incoming.length > 20) {
+      return res.status(400).json({
+        error: "Formato de conversación no válido. Envía una lista de mensajes."
+      });
+    }
+
+    const messages = incoming.map((message) => {
+      if (
+        !message ||
+        !["user", "assistant"].includes(message.role) ||
+        typeof message.content !== "string"
+      ) {
+        throw new Error("Mensaje no válido.");
+      }
+
+      return {
+        role: message.role,
+        content: message.content.slice(0, 1500)
+      };
+    });
+
+    if (!messages.some((message) => message.role === "user")) {
+      return res.status(400).json({
+        error: "No se encontró un mensaje del estudiante."
+      });
+    }
+
+    const reply = respond(messages);
+    return res.json({ reply });
+  } catch (error) {
+    console.error("Error en /api/chat:", error?.message || "Error desconocido");
+    return res.status(400).json({
+      error: "No se pudo procesar el mensaje. Inténtalo de nuevo."
+    });
+  }
+});
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    chatbot: "Lumy local",
+    openaiRequired: false,
+    apiRoute: "/api/chat"
+  });
+});
+
+// Ruta final para errores de JSON y otras solicitudes incorrectas.
+app.use((error, _req, res, _next) => {
+  console.error("Error del servidor:", error?.message || "Error desconocido");
+  res.status(400).json({ error: "La solicitud no pudo procesarse." });
+});
+
+app.listen(PORT, () => {
+  console.log(`Lumy está funcionando en el puerto ${PORT}`);
+});

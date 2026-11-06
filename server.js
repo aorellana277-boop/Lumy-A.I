@@ -724,8 +724,7 @@ app.use((error, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`Lumy está funcionando en el puerto ${PORT}`);
 });
-export function applyLumyExtras(BANKS, TOPIC_SIGNALS) {
-  const extraBanks = {
+const extraBanks = {
     bullying: {
       a: [
         "Gracias por explicarlo con tus propias palabras; voy a tomar en serio lo que cuentas.",

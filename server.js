@@ -1,3 +1,4 @@
+
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -300,7 +301,7 @@ const teacherBank = {
     "Cuéntaselo cuanto antes a un adulto de confianza que no esté implicado, como un familiar o tutor seguro.",
     "También puedes acudir a un orientador, responsable de protección o directivo de confianza distinto de la persona señalada.",
     "Evita quedarte a solas con esa persona para hablar del tema; pide que otro adulto te acompañe.",
-    "Si existen mensajes, guárdalos solo si es seguro y muéstraselos a un adulto de confianza.",
+    "Si existen mensajes, guárdalos solo si es seguro y muéstralos a un adulto de confianza.",
     "No tienes que investigar ni enfrentarte a esa persona. Un adulto seguro debe ayudarte a dar los siguientes pasos.",
     "Puedes mostrarle a un familiar este mensaje si te resulta difícil explicar lo que ocurre.",
     "Si el primer adulto no te escucha, busca a otro adulto seguro fuera de esa situación y vuelve a pedir ayuda.",

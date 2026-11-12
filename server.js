@@ -489,6 +489,8 @@ function buildBullyingReply(seed, name, behavior) {
 
 function urgentObjectAssaultReply(text) {
   const assaultSignals = [
+    "me metieron una escoba en el culo",
+    "me metieron una escoba en el culo ayuda we",
     "me metieron una escoba",
     "metieron una escoba",
     "me introdujeron una escoba",

@@ -912,9 +912,35 @@ function respond(messages) {
   const recentText = normalize(recentUserMessages.join(" "));
   const name = findRecentPersonName(recentUserMessages);
 
-  // Primero se atienden las señales de mayor prioridad.
-  const crisis = crisisReply(normalize(userMessages.slice(-3).join(" ")));
-  if (crisis) return crisis;
+  
+// PRIORIDAD: posibles agresiones sexuales o lesiones graves
+const objectAssault = urgentObjectAssaultReply(recentText);
+if (objectAssault) return objectAssault;
+
+// PRIORIDAD: situaciones de riesgo emocional
+const crisis = crisisReply(normalize(userMessages.slice(-3).join(" ")));
+if (crisis) return crisis;
+
+// NUEVAS RESPUESTAS CONTEXTUALES
+const expandedTopic = detectExpandedTopic(recentText);
+
+if (expandedTopic) {
+  let reply = compose(
+    seed,
+    expandedBanks[expandedTopic],
+    `expanded-${expandedTopic}`
+  );
+
+  if (
+    name &&
+    ["nickname", "rumors", "digital", "exclusion", "conflict"].includes(expandedTopic)
+  ) {
+    reply = `Sobre ${name}: ${reply}`;
+  }
+
+  return reply;
+}
+
 
   if (isAuthorityConcern(recentText)) {
     let reply = compose(

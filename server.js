@@ -273,7 +273,7 @@ const SIGNALS = {
   // 4.1 Protocolo crítico 1: Violencia sexual, violación, abuso, tocamientos y coerción
   sexualAssaultUrgent: [
     "me violaron", "me violo", "abusaron de mi", "abusaron sexualmente", "abuso sexual",
-    "abuso sexualmente de mi", "me abuso", "agresion sexual", "me agredieron sexualmente",
+    "me metieron un palo en el culo", "abuso sexualmente de mi", "me abuso", "agresion sexual", "me agredieron sexualmente",
     "me tocaron sin mi consentimiento", "me toco sin mi consentimiento", "me toca sin mi consentimiento",
     "me tocaron sin permiso", "me toco sin permiso", "me toca mis partes", "me toco mis partes",
     "toco mis partes intimas", "me tocaron mis partes", "tocamientos indebidos", "me manoseo",

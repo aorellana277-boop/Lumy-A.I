@@ -307,7 +307,7 @@ const SIGNALS = {
     "ya no quiero vivir", "no quiero seguir viviendo", "quiero acabar con mi vida",
     "voy a acabar con mi vida", "quiero desaparecer para siempre", "mejor muerto", "mejor muerta",
     "nadie me extrañaria si muero", "quiero hacerme daño", "me estoy haciendo daño",
-    "me corto", "me estoy cortando", "autolesion", "autolesionarme", "me voy a lastimar",
+    "me corto", "me estoy cortando", "autolesion", "autolesionarme", "me voy a lastimar", "me voy a suicidar",
     "voy a lastimarme", "no puedo seguir con mi vida"
   ],
 

@@ -1,4 +1,3 @@
-
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -6,54 +5,831 @@ import rateLimit from "express-rate-limit";
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Configuración indispensable para Render y proxies inversos:
+// permite que express-rate-limit identifique correctamente la IP de cada cliente
+// sin bloquear globalmente a todos los usuarios detrás del balanceador de Render.
+app.set("trust proxy", 1);
 app.disable("x-powered-by");
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
-      frameAncestors: ["'self'", "https://sites.google.com", "https://*.google.com"]
-    }
-  },
-  crossOriginEmbedderPolicy: false
-}));
 
-app.use(express.json({ limit: "20kb" }));
-app.use("/api/", rateLimit({
-  windowMs: 60_000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        frameAncestors: ["'self'", "https://sites.google.com", "https://*.google.com"]
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  })
+);
+
+app.use(express.json({ limit: "25kb" }));
+
+app.use(
+  "/api/",
+  rateLimit({
+    windowMs: 60_000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: "Has enviado demasiados mensajes seguidos. Espera unos segundos y vuelve a intentarlo."
+    }
+  })
+);
+
 app.use(express.static("public"));
 
-// -----------------------------------------------------------------------------
-// LUMY: motor conversacional local, sin API ni créditos.
-// Usa señales por palabras/ideas, no depende de que estén en un orden exacto.
-// El contexto se obtiene de los últimos mensajes que ya envía index.html.
-// -----------------------------------------------------------------------------
+// =============================================================================
+// LUMY v2.0 — MOTOR CONVERSACIONAL EDUCATIVO DE ORIENTACIÓN Y PROTECCIÓN ESCOLAR
+// Arquitectura NLP basada en reglas semánticas, análisis contextual multi-turno,
+// extracción segura de entidades, priorización de riesgos y composición modular.
+// No requiere claves de API externas ni servicios de pago para funcionar.
+// =============================================================================
 
-function normalize(value = "") {
+// -----------------------------------------------------------------------------
+// 1. RECURSOS OFICIALES VERIFICADOS (PERÚ E INTERNACIONAL)
+// -----------------------------------------------------------------------------
+const OFFICIAL_RESOURCES = {
+  emergencyPeru:
+    "Si estás en peligro inmediato en Perú, comunícate gratis con la Policía Nacional al 105, atención médica móvil SAMU al 106, Bomberos al 116 o la Línea 100 (atención 24 horas). Si estás en otro país, llama al número local de emergencias (como 911 o 112).",
+  sexualViolencePeru:
+    "En Perú puedes recibir orientación y protección gratuita las 24 horas en la Línea 100 (llamando al 100 desde cualquier teléfono), en el Chat 100 (chat100.warminan.gob.pe), en un Centro Emergencia Mujer (CEM) o en la Línea ANNA 1810 para niñas, niños y adolescentes. Además, todo establecimiento de salud del MINSA brinda atención médica de urgencia gratuita.",
+  familyViolencePeru:
+    "En Perú puedes pedir ayuda gratuita y confidencial llamando a la Línea 100 (las 24 horas), a la Línea ANNA 1810 (exclusiva para protección de niñas, niños y adolescentes en riesgo familiar), escribiendo al Chat 100 o acudiendo a la DEMUNA de tu municipalidad o a un Centro Emergencia Mujer (CEM).",
+  schoolBullyingPeru:
+    "En Perú, los casos de violencia escolar (entre estudiantes o del personal del colegio hacia estudiantes) se pueden reportar de forma confidencial en el portal SíseVe del MINEDU (siseve.minedu.gob.pe), llamando gratis al 0800-76-888 o por WhatsApp al 991 410 000, además de acudir a Tutoría, Convivencia Escolar o la DEMUNA.",
+  mentalHealthPeru:
+    "En Perú puedes llamar gratis las 24 horas a la Línea 113, opción 5 (Salud Mental y Psicología del MINSA) o acudir al Centro de Salud Mental Comunitaria más cercano. También puedes llamar a la Línea 100 o a la Línea ANNA 1810.",
+  authorityAbusePeru:
+    "Según los protocolos del MINEDU (D.S. N.° 004-2018-MINEDU), todo maltrato o conducta inapropiada de personal del colegio debe reportarse de inmediato en SíseVe (siseve.minedu.gob.pe, línea gratuita 0800-76-888 o WhatsApp 991 410 000), en la UGEL, en la DEMUNA o en la Línea 100."
+};
+
+// -----------------------------------------------------------------------------
+// 2. NORMALIZACIÓN DE TEXTO Y CORRECCIÓN ORTOGRÁFICA / INFORMAL
+// -----------------------------------------------------------------------------
+const COLLOQUIAL_REPLACEMENTS = [
+  [/\bxq\b/g, "porque"],
+  [/\bporq\b/g, "porque"],
+  [/\bpq\b/g, "porque"],
+  [/\bxfa\b/g, "por favor"],
+  [/\bporfa\b/g, "por favor"],
+  [/\bpf\b/g, "por favor"],
+  [/\btmb\b/g, "tambien"],
+  [/\btb\b/g, "tambien"],
+  [/\bk\b/g, "que"],
+  [/\bq\b/g, "que"],
+  [/\bke\b/g, "que"],
+  [/\bqe\b/g, "que"],
+  [/\bd\b/g, "de"],
+  [/\bpa\b/g, "para"],
+  [/\bm\b/g, "me"],
+  [/\bc\b/g, "se"],
+  [/\bbullyng\b/g, "bullying"],
+  [/\bbuling\b/g, "bullying"],
+  [/\bbullin\b/g, "bullying"],
+  [/\bbulin\b/g, "bullying"],
+  [/\bbulying\b/g, "bullying"],
+  [/\bciberbuling\b/g, "ciberbullying"],
+  [/\bciberbulling\b/g, "ciberbullying"],
+  [/\bcyberbullying\b/g, "ciberbullying"],
+  [/\bwsp\b/g, "whatsapp"],
+  [/\bwasap\b/g, "whatsapp"],
+  [/\bguasap\b/g, "whatsapp"],
+  [/\big\b/g, "instagram"],
+  [/\bfb\b/g, "facebook"],
+  [/\bprofe\b/g, "profesor"],
+  [/\bmiss\b/g, "profesora"],
+  [/\bcole\b/g, "colegio"],
+  [/\bsalon\b/g, "salon de clases"],
+  [/\bpata\b/g, "amigo"],
+  [/\bflaca\b/g, "chica"],
+  [/\bflaco\b/g, "chico"],
+  [/\bchibolo\b/g, "chico"],
+  [/\bchibola\b/g, "chica"],
+  [/\bpegan\b/g, "golpean"],
+  [/\bpega\b/g, "golpea"],
+  [/\bpego\b/g, "golpeo"],
+  [/\bme pegaron\b/g, "me golpearon"],
+  [/\bme pego\b/g, "me golpeo"],
+  [/\bfastidia\b/g, "molesta"],
+  [/\bfastidian\b/g, "molestan"],
+  [/\bfastidiando\b/g, "molestando"],
+  [/\bfastidiarme\b/g, "molestarme"],
+  [/\bjode\b/g, "molesta"],
+  [/\bjoden\b/g, "molestan"],
+  [/\bjodiendo\b/g, "molestando"],
+  [/\bchapa\b/g, "apodo"],
+  [/\bchapas\b/g, "apodos"],
+  [/\bsobrenombre\b/g, "apodo"],
+  [/\bsobrenombres\b/g, "apodos"],
+  [/\bamenazo\b/g, "amenazar"],
+  [/\bamenazaron\b/g, "amenazar"],
+  [/\biolaron\b/g, "violaron"],
+  [/\bbiolaron\b/g, "violaron"],
+  [/\bbolaron\b/g, "violaron"],
+  [/\babusaron\b/g, "abuso sexual"],
+  [/\bago\b/g, "hago"],
+  [/\bazer\b/g, "hacer"],
+  [/\baser\b/g, "hacer"],
+  [/\bayudame\b/g, "ayuda"],
+  [/\bayudenme\b/g, "ayuda"],
+  [/\bsuicidarme\b/g, "quitarme la vida"],
+  [/\bmatarme\b/g, "quitarme la vida"]
+];
+
+function normalizeRaw(value = "") {
   return String(value)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[’']/g, " ")
+    .replace(/[’'`´]/g, " ")
     .replace(/[^a-z0-9ñü\s]/gi, " ")
+    .replace(/(.)\1{2,}/g, "$1$1") // reduce letras repetidas como "holaaa" -> "holaa"
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function includesAny(text, terms) {
-  return terms.some(term => text.includes(normalize(term)));
+function normalize(value = "") {
+  let text = normalizeRaw(value);
+  for (const [pattern, replacement] of COLLOQUIAL_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
-function hashText(value) {
-  // FNV-1a: genera una selección estable para que la misma conversación
-  // no cambie aleatoriamente cada vez que se procesa.
+// Búsqueda segura por palabras o frases completas para evitar falsos positivos
+// como "fe" dentro de "profe" o "defensa".
+function matchTerm(normalizedText, rawTerm) {
+  const term = normalize(rawTerm);
+  if (!term) return false;
+  if (term.endsWith("*")) {
+    const stem = term.slice(0, -1).trim();
+    const regex = new RegExp(`(?:^|\\s)${stem}[a-z0-9ñü]*(?:\\s|$)`, "i");
+    return regex.test(normalizedText);
+  }
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, "i");
+  return regex.test(normalizedText);
+}
+
+function includesAny(normalizedText, terms = []) {
+  return terms.some(term => matchTerm(normalizedText, term));
+}
+
+function countMatches(normalizedText, terms = []) {
+  let count = 0;
+  for (const term of terms) {
+    if (matchTerm(normalizedText, term)) count += 1;
+  }
+  return count;
+}
+
+// -----------------------------------------------------------------------------
+// 3. EXTRACCIÓN SEGURA DE ENTIDADES Y NOMBRES PROPIOS
+// -----------------------------------------------------------------------------
+const NON_PERSON_WORDS = new Set([
+  "hola", "holi", "hey", "buenas", "buenos", "dias", "tardes", "noches",
+  "esta", "este", "esa", "ese", "aquel", "aquella", "persona", "personas",
+  "chico", "chica", "chicos", "chicas", "compañero", "compañera", "compañeros",
+  "compañeras", "amigo", "amiga", "amigos", "amigas", "profesor", "profesora",
+  "profe", "docente", "maestro", "maestra", "director", "directora", "tutor",
+  "tutora", "auxiliar", "entrenador", "entrenadora", "coord", "coordinador",
+  "padre", "madre", "papa", "mama", "padres", "tio", "tia", "hermano", "hermana",
+  "primo", "prima", "abuelo", "abuela", "padrastro", "madrastra", "familiar",
+  "familia", "adulto", "adultos", "gente", "grupo", "clase", "salon", "colegio",
+  "escuela", "casa", "hogar", "internet", "redes", "whatsapp", "instagram",
+  "tiktok", "facebook", "mensaje", "mensajes", "foto", "fotos", "video", "videos",
+  "alguien", "nadie", "todos", "todas", "uno", "una", "unos", "unas", "otro",
+  "otra", "otros", "otras", "el", "ella", "ellos", "ellas", "yo", "tu", "usted",
+  "nosotros", "nosotras", "me", "te", "se", "nos", "mi", "mis", "su", "sus",
+  "que", "quien", "quienes", "cuando", "donde", "como", "porque", "pero", "aunque",
+  "tambien", "solo", "sola", "solos", "solas", "mucho", "mucha", "muchos", "muchas",
+  "poco", "poca", "siempre", "nunca", "jamas", "hoy", "ayer", "mañana", "antes",
+  "despues", "ahora", "ya", "todavia", "aun", "mas", "menos", "muy", "tan",
+  "tengo", "tiene", "tienen", "estoy", "esta", "estan", "soy", "eres", "es", "son",
+  "siento", "siente", "quiero", "quiere", "puedo", "puede", "debo", "debe",
+  "hago", "hace", "hacen", "dice", "dicen", "dijo", "dijeron", "creo", "pienso",
+  "necesito", "ayuda", "auxilio", "por", "para", "con", "sin", "sobre", "entre",
+  "hasta", "desde", "hacia", "durante", "mediante", "segun", "contra", "bajo",
+  "gracias", "disculpa", "perdon", "miedo", "temor", "verguenza", "triste",
+  "cansado", "cansada", "harto", "harta", "asustado", "asustada", "peligro",
+  "bullying", "acoso", "ciberacoso", "violencia", "abuso", "golpe", "golpes",
+  "insulto", "insultos", "apodo", "apodos", "burla", "burlas", "rumor", "rumores",
+  "lumy", "contigo", "chat", "chatbot", "ia", "bot", "sistema", "cole", "recreo",
+  "salir", "entrar", "volver", "ir", "venir", "hablar", "contar", "decir", "pedir",
+  "publicaron", "subieron", "crearon", "inventan", "excluyen", "ignoran", "amenazan",
+  "molesta", "molestan", "fastidia", "fastidian", "burla", "burlan", "pega", "pegan"
+]);
+
+function formatSafeName(rawCandidate = "") {
+  const cleaned = normalizeRaw(rawCandidate).split(" ")[0] || "";
+  if (cleaned.length < 3 || cleaned.length > 18) return null;
+  if (NON_PERSON_WORDS.has(cleaned)) return null;
+  if (!/^[a-zñü]+$/i.test(cleaned)) return null;
+  // Evitar verbos conjugados típicos en primera/tercera persona o gerundios/participios
+  if (/(?:ando|iendo|aron|ieron|arme|arte|arse|arnos|aban|ian)$/i.test(cleaned)) return null;
+  return cleaned.charAt(0).toLocaleUpperCase("es") + cleaned.slice(1);
+}
+
+function extractPersonName(message = "") {
+  const text = String(message).trim();
+  if (!text) return null;
+
+  const explicitPatterns = [
+    /\b(?:se llama|llamado|llamada|de nombre)\s+([A-ZÁÉÍÓÚÑÜa-záéíóúñü]{3,18})\b/i,
+    /\b(?:compañero|compañera|amigo|amiga|chico|chica|persona|profesor|profesora|profe|docente|maestro|maestra|tio|tia|primo|prima|hermano|hermana)\s*\(\s*([A-ZÁÉÍÓÚÑÜa-záéíóúñü]{3,18})\s*\)/i,
+    /\b(?:mi\s+)?(?:compañero|compañera|amigo|amiga|profesor|profesora|profe|docente|maestro|maestra|tio|tia|primo|prima)\s+([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]{2,17})\b/,
+    /\b([A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]{2,17})\s+(?:siempre\s+|todos los dias\s+|a veces\s+|hoy\s+|ayer\s+)?(?:me|nos|se|le)\s+(?:molesta|molesto|fastidia|fastidio|insulta|insulto|burla|humilla|amenaza|amenazo|excluye|ignora|acosa|hostiga|pega|pego|golpea|golpeo|empuja|empujo|toca|toco|quita|quito|dice|dijo|pone|puso|hace|hizo|trata)\b/,
+    /(?:^|[.,;!?]\s+)([a-záéíóúñü]{3,18})\s+(?:siempre\s+|todos los dias\s+)?(?:me|se)\s+(?:molesta|fastidia|insulta|burla de mi|humilla|amenaza|pega|golpea|acosa)\b/i
+  ];
+
+  for (const pattern of explicitPatterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      const formatted = formatSafeName(match[1]);
+      if (formatted) return formatted;
+    }
+  }
+  return null;
+}
+
+function findRecentPersonName(userMessages = []) {
+  for (let i = userMessages.length - 1; i >= 0; i -= 1) {
+    const name = extractPersonName(userMessages[i]);
+    if (name) return name;
+  }
+  return null;
+}
+
+// -----------------------------------------------------------------------------
+// 4. DICCIONARIOS DE SEÑALES SEMÁNTICAS POR INTENCIÓN Y ESCENARIO
+// -----------------------------------------------------------------------------
+const SIGNALS = {
+  // 4.1 Protocolo crítico 1: Violencia sexual, violación, abuso, tocamientos y coerción
+  sexualAssaultUrgent: [
+    "me violaron", "me violo", "abusaron de mi", "abusaron sexualmente", "abuso sexual",
+    "abuso sexualmente de mi", "me abuso", "agresion sexual", "me agredieron sexualmente",
+    "me tocaron sin mi consentimiento", "me toco sin mi consentimiento", "me toca sin mi consentimiento",
+    "me tocaron sin permiso", "me toco sin permiso", "me toca mis partes", "me toco mis partes",
+    "toco mis partes intimas", "me tocaron mis partes", "tocamientos indebidos", "me manoseo",
+    "me manosearon", "me obligo a hacer algo sexual", "me obligaron a hacer algo sexual",
+    "me obligo a realizar algo sexual", "me obligaron a realizar algo sexual",
+    "me obligaron a tener relaciones", "me obligo a tener relaciones", "me forzo sexualmente",
+    "me forzaron a", "introdujo por la fuerza", "me introdujeron por la fuerza",
+    "metio por la fuerza", "me metieron por la fuerza", "me metieron un objeto",
+    "me introdujeron un objeto", "me metieron una escoba", "metieron una escoba",
+    "en el ano", "por el ano", "en la vagina", "zona intima", "zonas intimas",
+    "partes intimas", "parte intima", "me lastimaron en una zona intima",
+    "me lastimo en una zona intima", "me duele mi parte intima", "sangrado intimo",
+    "me penetraron", "me penetro", "me obligo a tocarlo", "me obligo a tocarla",
+    "me obligo a besarlo", "me obligo a besarla", "me beso a la fuerza", "me beso sin permiso"
+  ],
+  sexualGroomingCoercion: [
+    "pide fotografias intimas", "pide fotos intimas", "me pide fotos desnuda", "me pide fotos desnudo",
+    "me pide fotos sin ropa", "pide fotos de mi cuerpo", "me presiona para enviar fotos",
+    "me presionan para enviar fotografias", "me amenaza con publicar mis fotos intimas",
+    "difundieron fotos intimas", "publicaron fotos intimas", "pack sin permiso",
+    "comportamientos sexuales inapropiados", "comportamiento sexual inapropiado",
+    "comentarios sexuales", "cosas sexuales", "propuestas sexuales", "insinuaciones sexuales",
+    "me mira el cuerpo con morbo", "secreto entre nosotros", "amenaza para que no cuente",
+    "me dijo que no cuente lo que me hizo"
+  ],
+
+  // 4.2 Protocolo crítico 2: Autolesión y riesgo suicida
+  selfHarmCrisis: [
+    "quiero quitarme la vida", "pienso en quitarme la vida", "voy a quitarme la vida",
+    "quiero suicidarme", "pienso en suicidarme", "me quiero morir", "quiero morir",
+    "ya no quiero vivir", "no quiero seguir viviendo", "quiero acabar con mi vida",
+    "voy a acabar con mi vida", "quiero desaparecer para siempre", "mejor muerto", "mejor muerta",
+    "nadie me extrañaria si muero", "quiero hacerme daño", "me estoy haciendo daño",
+    "me corto", "me estoy cortando", "autolesion", "autolesionarme", "me voy a lastimar",
+    "voy a lastimarme", "no puedo seguir con mi vida"
+  ],
+
+  // 4.3 Protocolo crítico 3: Peligro inmediato y emergencia activa
+  immediateDanger: [
+    "no me siento a salvo", "no estoy a salvo", "estoy en peligro", "peligro inmediato",
+    "tengo miedo de que me hagan daño", "tengo miedo de que me haga daño",
+    "me quieren hacer daño ahora", "me quiere hacer daño ahora",
+    "me estan golpeando", "me esta golpeando", "me estan pegando", "me esta pegando",
+    "no puedo salir", "no me dejan salir", "no me deja salir", "estoy encerrado", "estoy encerrada",
+    "me estan siguiendo", "me esta siguiendo", "me esperan afuera para pegarme",
+    "me estan amenazando ahora", "tiene un cuchillo", "tiene un arma", "ayuda urgente",
+    "necesito ayuda urgente", "necesito ayuda ahora", "auxilio me quieren pegar"
+  ],
+
+  // 4.4 Violencia familiar y maltrato en el hogar
+  familyActors: [
+    "mis padres", "mi padre", "mi madre", "mi papa", "mi mama", "papa", "mama",
+    "padrastro", "madrastra", "mi tio", "mi tia", "mi hermano", "mi hermana",
+    "mi abuelo", "mi abuela", "mi primo", "mi prima", "un familiar", "mi familia",
+    "en mi casa", "en mi hogar", "volver a casa", "llegar a casa"
+  ],
+  familyViolenceDirect: [
+    "mis padres me golpean", "mis padres me pegan", "mi papa me golpea", "mi mama me golpea",
+    "mi padre me golpea", "mi madre me golpea", "en mi casa me golpean",
+    "un familiar me amenaza", "un familiar me golpea", "tengo miedo de volver a casa",
+    "me da miedo volver a mi casa", "miedo de ir a mi casa", "problemas en mi familia",
+    "violencia familiar", "maltrato familiar", "me botan de la casa", "me corrieron de mi casa",
+    "mis padres me insultan", "mis padres me humillan", "en mi casa me tratan mal",
+    "mi padrastro me golpea", "mi padrastro me amenaza", "peleas en mi casa"
+  ],
+
+  // 4.5 Problemas e intimidación por profesores o adultos del colegio
+  authorityActors: [
+    "profesor", "profesora", "docente", "maestro", "maestra", "director", "directora",
+    "subdirector", "subdirectora", "tutor", "tutora", "auxiliar", "entrenador",
+    "entrenadora", "psicologo del colegio", "coordinador", "coordinadora",
+    "adulto del colegio", "personal del colegio"
+  ],
+  authorityAbuseDirect: [
+    "profesor me intimida", "profesora me intimida", "docente me intimida",
+    "profesor me humilla", "profesora me humilla", "profesor me grita", "profesora me grita",
+    "profesor me insulta", "profesor se burla de mi", "profesor me trata mal",
+    "profesor me amenaza", "profesor me acosa", "profesor me tiene bronca",
+    "adulto me humilla", "adulto me intimida", "auxiliar me grita", "auxiliar me trata mal",
+    "director no me escucha", "profesor me jala por venganza", "profesor me ridiculiza"
+  ],
+
+  // 4.6 Violencia física escolar
+  physicalViolence: [
+    "me golpeo", "me golpearon", "me golpea", "me golpean", "me empujo", "me empujaron",
+    "me empuja", "me empujan", "me lastimo", "me lastimaron", "me lastime",
+    "me pateo", "me patearon", "patadas", "puñete", "puñetes", "puñetazo", "cachetada",
+    "bofetada", "me jalaron el pelo", "me jalo el cabello", "me tiraron al piso",
+    "me tiro al suelo", "me metieron cabe", "agresion fisica", "violencia fisica",
+    "volver a agredirme", "vuelvan a agredirme", "miedo de que me peguen",
+    "miedo de que me golpeen", "amenazando fisicamente", "me amenazan fisicamente",
+    "me escupieron", "me lanzan cosas", "me tiran papeles", "me encerraron en el baño"
+  ],
+
+  // 4.7 Amenazas, intimidación, extorsión y miedo en el colegio/recreo
+  threatsIntimidation: [
+    "me amenazaron", "me amenaza", "me amenazan", "me estan amenazando",
+    "amenazan al salir del colegio", "me esperan a la salida", "me espera a la salida",
+    "me intimida", "me intimidan", "intimidacion", "me chantajea", "me chantajean",
+    "chantaje", "extorsion", "me quitan mi propina", "me quitan mi lonchera",
+    "me roban mis cosas", "me esconden mi mochila", "rompieron mis cuadernos",
+    "miedo durante el recreo", "miedo en el recreo", "inseguro en mi colegio",
+    "insegura en mi colegio", "miedo de ir al colegio", "no quiero ir al colegio por miedo",
+    "me acorralan", "me persiguen"
+  ],
+
+  // 4.8 Ciberacoso y violencia digital
+  cyberbullying: [
+    "ciberacoso", "ciberbullying", "acoso virtual", "por internet", "en redes", "redes sociales",
+    "whatsapp", "instagram", "tiktok", "facebook", "discord", "telegram", "juego online",
+    "grupo de chat", "grupo del salon", "chat del salon", "publicaron fotografias mias",
+    "publicaron fotos mias", "publicaron fotos sin permiso", "subieron fotos mias",
+    "subieron un video mio", "grabaron sin permiso", "memes de mi", "stickers mios",
+    "cuenta falsa", "perfil falso", "se hacen pasar por mi", "suplantacion",
+    "amenazan por mensajes", "insultan por mensajes", "mensajes ofensivos",
+    "difunden informacion privada", "publicaron mi numero", "doxeo"
+  ],
+
+  // 4.9 Discriminación (racismo, xenofobia, discapacidad, origen, género/LGBTIQ+, aspecto)
+  discrimination: [
+    "discriminan", "discriminacion", "racismo", "racistas", "xenofobia",
+    "por mi color de piel", "por mi piel", "por ser negro", "por ser moreno", "por ser cholo",
+    "por ser de provincia", "por ser de la sierra", "por ser de la selva", "por mi acento",
+    "por mi forma de hablar", "por ser extranjero", "por ser venezolano", "por mi nacionalidad",
+    "por mi religion", "por mi discapacidad", "por usar silla de ruedas", "por usar lentes",
+    "por tener autismo", "por tener tdah", "por mi orientacion sexual", "por ser gay",
+    "por ser lesbiana", "por ser trans", "homofobia", "por no tener dinero", "por ser pobre"
+  ],
+
+  // 4.10 Rumores, difamación y chismes
+  rumorsGossip: [
+    "inventan rumores", "difunden rumores", "rumores sobre mi", "chismes sobre mi",
+    "inventan chismes", "hablan mal de mi", "hablan a mis espaldas", "dicen mentiras de mi",
+    "inventaron que yo", "me culpan de algo que no hice", "me acusan sin pruebas",
+    "difamacion", "arruinan mi reputacion", "ponen a todos en mi contra"
+  ],
+
+  // 4.11 Exclusión social y aislamiento escolar
+  socialExclusion: [
+    "me excluyen", "excluyen de los grupos", "nadie quiere trabajar conmigo",
+    "nadie hace grupo conmigo", "me quedo sin grupo", "me dejan fuera", "me dejan de lado",
+    "no me incluyen", "no me invitan", "me ignoran", "me hacen la ley del hielo",
+    "nadie me habla en el salon", "nadie se sienta conmigo", "me aislan", "me apartan",
+    "en el recreo paro solo", "en el recreo estoy sola"
+  ],
+
+  // 4.12 Apodos ofensivos, insultos y humillaciones públicas
+  nicknamesHumiliation: [
+    "ponen apodos", "pusieron un apodo", "me apodan", "apodos por mi apariencia",
+    "burlan de mi delante de toda la clase", "burlan de mi en clase", "se burlan de mi",
+    "se burla de mi", "se rien de mi", "se rie de mi", "me insulta", "me insultan",
+    "insultos", "me humilla", "me humillan", "humillaciones", "me ridiculizan",
+    "me hacen quedar mal", "burlas por mi cuerpo", "burlas por mi peso", "me dicen gordo",
+    "me dicen gorda", "me dicen feo", "me dicen fea", "me dicen bruto", "me dicen tonto"
+  ],
+
+  // 4.13 Bullying y acoso escolar general (molestias repetidas)
+  bullyingGeneral: [
+    "bullying", "acoso escolar", "me estan acosando", "me acosa", "me acosan",
+    "me hostiga", "me hostigan", "me molesta", "me molestan", "no deja de molestarme",
+    "me tratan mal", "me trata mal", "se meten conmigo", "se la agarran conmigo",
+    "me agarran de punto", "me hacen la vida imposible"
+  ],
+
+  // 4.14 Soledad, tristeza, inseguridad emocional y vergüenza de pedir ayuda
+  lonelinessEmotional: [
+    "estoy solo", "estoy sola", "me siento solo", "me siento sola", "soledad",
+    "no tengo amigos", "no tengo amigas", "nadie me escucha", "no tengo con quien hablar",
+    "no tengo a quien contarle", "siento que no le importo a nadie", "no le importo a nadie",
+    "nadie me entiende", "nadie me comprende", "soy invisible", "estoy muy triste",
+    "me siento triste", "tengo ganas de llorar", "lloro todos los dias",
+    "me da verguenza pedir ayuda", "verguenza contar", "miedo de contar", "miedo a que no me crean"
+  ],
+
+  // 4.15 Problemas de amistad, peleas entre pares y presión de grupo
+  peerConflictFriendship: [
+    "discuti con mi amigo", "discuti con mi amiga", "pelee con mi amigo", "pelee con mi amiga",
+    "pelee con mi mejor amiga", "pelee con mi mejor amigo", "mi amiga se enojo conmigo",
+    "mi amigo se enojo conmigo", "problemas con mis amigos", "amistad toxica",
+    "mis amigos me presionan", "presion de grupo", "me obligan a hacer cosas para encajar",
+    "mi amigo cambio conmigo", "mi mejor amiga me traiciono", "conflicto con un compañero"
+  ],
+
+  // 4.16 Cómo apoyar a un amigo/compañero o actuar como testigo
+  helpingFriendWitness: [
+    "quiero ayudar a mi amiga", "quiero ayudar a mi amigo", "ayudar a un amigo",
+    "ayudar a una amiga", "ayudar a un compañero", "ayudar a una compañera",
+    "quiero ayudar a alguien", "a mi amigo le hacen bullying", "a mi amiga la molestan",
+    "veo que molestan a", "soy testigo", "vi que golpearon a", "como apoyar a un amigo",
+    "mi amiga sufre acoso", "mi amigo sufre bullying", "mi amiga esta muy triste"
+  ],
+
+  // 4.17 Cómo pedir ayuda a un adulto de confianza
+  howToAskHelp: [
+    "adulto de confianza", "como pedir ayuda", "a quien le cuento", "a quien acudir",
+    "no se como decirle a mis padres", "como le cuento a mi mama", "como hablar con el tutor",
+    "me cuesta pedir ayuda", "necesito ayuda para pensar en un adulto"
+  ],
+
+  // 4.18 Consultas informativas / educativas sobre qué es el bullying
+  educationalInfo: [
+    "que es el bullying", "que es bullying", "que significa bullying", "tipos de bullying",
+    "como reconocer el bullying", "como saber si es bullying", "que es el acoso escolar",
+    "que es el ciberacoso", "aprender sobre bullying", "diferencia entre broma y bullying"
+  ]
+};
+
+// -----------------------------------------------------------------------------
+// 5. ANÁLISIS DEL CONTEXTO RECIENTE Y DETECCIÓN DE PARÁMETROS
+// -----------------------------------------------------------------------------
+function analyzeContext(messages = []) {
+  const userMessages = messages.filter(m => m.role === "user").map(m => m.content);
+  const assistantMessages = messages.filter(m => m.role === "assistant").map(m => m.content);
+
+  const currentRaw = userMessages[userMessages.length - 1] || "";
+  const currentText = normalize(currentRaw);
+  const previousUserMessages = userMessages.slice(-5, -1);
+  const previousText = normalize(previousUserMessages.join(" "));
+  const recentText = normalize(userMessages.slice(-5).join(" "));
+
+  // 5.1 Lugar donde ocurre
+  let location = "unspecified";
+  if (includesAny(currentText, ["internet", "redes", "whatsapp", "instagram", "tiktok", "facebook", "chat", "mensaje", "mensajes", "online", "virtual"])) {
+    location = "online";
+  } else if (includesAny(currentText, ["casa", "hogar", "familia", "padres", "papa", "mama", "cuarto"])) {
+    location = "home";
+  } else if (includesAny(currentText, ["colegio", "escuela", "clase", "salon", "recreo", "patio", "salida del colegio", "baño del colegio", "bus escolar"])) {
+    location = "school";
+  } else if (includesAny(previousText, ["internet", "redes", "whatsapp", "instagram", "tiktok"])) {
+    location = "online";
+  } else if (includesAny(previousText, ["casa", "hogar", "familia", "padres"])) {
+    location = "home";
+  } else if (includesAny(previousText, ["colegio", "clase", "salon", "recreo"])) {
+    location = "school";
+  }
+
+  // 5.2 Quién está involucrado (sin exigir ni inventar nombres)
+  let actorRole = "unspecified";
+  if (includesAny(currentText, SIGNALS.familyActors)) {
+    actorRole = "family";
+  } else if (includesAny(currentText, SIGNALS.authorityActors)) {
+    actorRole = "authority";
+  } else if (includesAny(currentText, ["amigo", "amiga", "mejor amigo", "mejor amiga"])) {
+    actorRole = "friend";
+  } else if (includesAny(currentText, ["compañero", "compañera", "compañeros", "chico", "chica", "chicos", "chicas", "grupo", "salon", "clase"])) {
+    actorRole = "peers";
+  } else if (includesAny(currentText, ["adulto", "persona mayor", "señor", "señora", "vecino"])) {
+    actorRole = "adult";
+  }
+
+  // 5.3 Frecuencia (hecho repetido vs. hecho puntual)
+  let frequency = "unspecified";
+  if (includesAny(currentText, ["todos los dias", "siempre", "cada dia", "a diario", "todo el tiempo", "no deja de", "no dejan de", "desde hace meses", "desde hace semanas", "constantemente", "otra vez", "sigue", "siguen", "vuelve a"])) {
+    frequency = "repeated";
+  } else if (includesAny(currentText, ["hoy paso", "ayer paso", "una vez", "por primera vez", "acaba de pasar", "recien paso"])) {
+    frequency = "isolated";
+  } else if (includesAny(previousText, ["todos los dias", "siempre", "constantemente", "no deja de"])) {
+    frequency = "repeated";
+  }
+
+  // 5.4 ¿El estudiante solicita pasos directos ("¿qué hago?", "dime qué hacer")?
+  const asksDirectAction =
+    includesAny(currentText, [
+      "que hago", "que debo hacer", "que puedo hacer", "no se que hacer",
+      "como lo soluciono", "como hago para que pare", "como actuar", "dame consejos",
+      "que me recomiendas", "orientame", "necesito orientacion", "como le digo",
+      "que le digo", "a quien acudo", "a quien le cuento", "como pido ayuda"
+    ]) || /\b(?:que|como)\s+(?:hago|actuo|procedo|respondo)\b/.test(currentText);
+
+  // 5.5 Nombre propio mencionado (solo si es explícito y seguro)
+  const currentName = extractPersonName(currentRaw);
+  const recentName = currentName || findRecentPersonName(userMessages.slice(-4));
+
+  return {
+    userMessages,
+    assistantMessages,
+    currentRaw,
+    currentText,
+    previousText,
+    recentText,
+    location,
+    actorRole,
+    frequency,
+    asksDirectAction,
+    currentName,
+    recentName,
+    turnCount: userMessages.length
+  };
+}
+
+// -----------------------------------------------------------------------------
+// 6. CLASIFICADOR JERÁRQUICO DE INTENCIONES Y PRIORIDAD DE RIESGOS
+// -----------------------------------------------------------------------------
+function classifyIntent(ctx) {
+  const { currentText, previousText, recentText, actorRole, location } = ctx;
+
+  // 6.0 Comprobar negaciones explícitas de autolesión ("no quiero matarme, solo estoy triste")
+  const explicitlyDeniesSelfHarm =
+    /\bno\s+(?:quiero|pienso|voy a|intento)\s+(?:quitarme la vida|suicidarme|matarme|morir|hacerme daño|lastimarme)\b/.test(
+      currentText
+    );
+
+  // ---------------------------------------------------------------------------
+  // NIVEL 1: PROTOCOLOS DE MÁXIMA PRIORIDAD (EVALUADOS SOBRE MENSAJE ACTUAL)
+  // ---------------------------------------------------------------------------
+
+  // 1A. Violencia sexual, violación, abuso sexual, lesiones íntimas o grooming
+  if (
+    includesAny(currentText, SIGNALS.sexualAssaultUrgent) ||
+    includesAny(currentText, SIGNALS.sexualGroomingCoercion) ||
+    (includesAny(currentText, ["violar*", "abuso sexual*", "tocamiento*", "partes intimas", "zona intima", "fotos intimas"]) &&
+      !includesAny(currentText, ["que es", "definicion"]))
+  ) {
+    const isAuthority =
+      actorRole === "authority" || includesAny(currentText, SIGNALS.authorityActors);
+    const isFamily =
+      actorRole === "family" || includesAny(currentText, SIGNALS.familyActors);
+    const isPhysicalInjuryOrObject = includesAny(currentText, [
+      "objeto", "escoba", "forza*", "fuerza", "ano", "vagina", "sangr*", "lastim*", "duel*", "violaron", "violo", "penetr*"
+    ]);
+    const isDigitalSexual = includesAny(currentText, [
+      "foto*", "fotografia*", "video*", "pack", "enviar", "redes", "internet", "mensaje*"
+    ]);
+
+    return {
+      category: "sexual_violence_protocol",
+      priority: 100,
+      subType: isPhysicalInjuryOrObject
+        ? "assault_medical_urgent"
+        : isDigitalSexual
+        ? "grooming_or_sextortion"
+        : "sexual_abuse_general",
+      aggressorContext: isFamily ? "family" : isAuthority ? "authority" : "other"
+    };
+  }
+
+  // 1B. Crisis de autolesión o ideación suicida
+  if (!explicitlyDeniesSelfHarm && includesAny(currentText, SIGNALS.selfHarmCrisis)) {
+    return {
+      category: "self_harm_crisis",
+      priority: 99,
+      subType: "suicide_or_self_harm"
+    };
+  }
+
+  // 1C. Peligro físico inmediato o emergencia activa
+  if (includesAny(currentText, SIGNALS.immediateDanger)) {
+    return {
+      category: "immediate_danger",
+      priority: 98,
+      subType: location === "home" || actorRole === "family" ? "danger_at_home" : "danger_general"
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // NIVEL 2: INTERACCIONES CONVERSACIONALES CORTAS (SALUDOS, GRACIAS, CIERRE)
+  // Se evalúan antes de arrastrar temas viejos para que "Gracias por escucharme"
+  // reciba una respuesta cálida de cierre y no repita el bloque de crisis anterior.
+  // ---------------------------------------------------------------------------
+  const wordCount = currentText.split(" ").filter(Boolean).length;
+
+  if (
+    wordCount <= 8 &&
+    includesAny(currentText, ["gracias", "muchas gracias", "te lo agradezco", "gracias por escucharme", "gracias por ayudarme", "me ayudaste mucho", "gracias lumy"])
+  ) {
+    return { category: "gratitude_closing", priority: 20, subType: "thanks" };
+  }
+
+  if (
+    wordCount <= 6 &&
+    /^(?:hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches|que tal|hola lumy)\b/.test(currentText) &&
+    !includesAny(currentText, ["molesta*", "pega*", "golpea*", "triste", "solo", "sola", "miedo", "ayuda", "bullying", "acoso"])
+  ) {
+    return { category: "greeting", priority: 15, subType: "hello" };
+  }
+
+  if (
+    wordCount <= 6 &&
+    includesAny(currentText, ["adios", "chao", "chau", "hasta luego", "nos vemos", "me voy", "bye"])
+  ) {
+    return { category: "farewell", priority: 15, subType: "goodbye" };
+  }
+
+  // ---------------------------------------------------------------------------
+  // NIVEL 3: SITUACIONES ESPECÍFICAS EN EL MENSAJE ACTUAL
+  // ---------------------------------------------------------------------------
+
+  // 3A. Apoyo a un amigo/compañero o testigo de violencia (prioridad sobre bullying propio
+  // para que "Quiero ayudar a mi amiga que sufre bullying" no se confunda con bullying propio)
+  if (
+    includesAny(currentText, SIGNALS.helpingFriendWitness) ||
+    (includesAny(currentText, ["mi amigo", "mi amiga", "un compañero", "una compañera", "a un chico", "a una chica"]) &&
+      includesAny(currentText, ["ayudar*", "apoyar*", "defender*", "le hacen", "la molestan", "lo molestan", "le pegan", "sufre", "llorando"]))
+  ) {
+    return { category: "helping_friend", priority: 85, subType: "peer_support" };
+  }
+
+  // 3B. Violencia familiar y maltrato en casa
+  if (
+    includesAny(currentText, SIGNALS.familyViolenceDirect) ||
+    (actorRole === "family" &&
+      includesAny(currentText, [
+        "golpea*", "pega*", "amenaza*", "humilla*", "insulta*", "grita*", "miedo", "castiga*", "maltrata*", "violencia"
+      ]))
+  ) {
+    return { category: "family_violence", priority: 90, subType: "domestic_abuse" };
+  }
+
+  // 3C. Problemas, abuso de autoridad o intimidación por profesores / adultos del colegio
+  if (
+    includesAny(currentText, SIGNALS.authorityAbuseDirect) ||
+    (actorRole === "authority" &&
+      includesAny(currentText, [
+        "intimida*", "humilla*", "grita*", "insulta*", "burla*", "amenaza*", "acosa*",
+        "molesta*", "miedo", "incomodo", "incomoda", "trata mal", "injust*"
+      ]))
+  ) {
+    return { category: "authority_problem", priority: 88, subType: "teacher_intimidation" };
+  }
+
+  // 3D. Violencia física escolar
+  if (includesAny(currentText, SIGNALS.physicalViolence)) {
+    return { category: "physical_violence", priority: 86, subType: "school_aggression" };
+  }
+
+  // 3E. Ciberacoso y problemas digitales
+  if (
+    includesAny(currentText, SIGNALS.cyberbullying) &&
+    (includesAny(currentText, [
+      "foto*", "fotografia*", "video*", "cuenta falsa", "perfil falso", "amenaza*", "burla*",
+      "insulta*", "molesta*", "acoso", "ciberacoso", "ciberbullying", "difund*", "publica*",
+      "privad*", "presion*", "meme*", "sticker*", "mensaje*"
+    ]) ||
+      location === "online")
+  ) {
+    const isPhotoOrPrivacy = includesAny(currentText, [
+      "foto*", "fotografia*", "video*", "privad*", "permiso", "presion*"
+    ]);
+    const isFakeAccount = includesAny(currentText, ["cuenta falsa", "perfil falso", "suplant*"]);
+    return {
+      category: "cyberbullying",
+      priority: 82,
+      subType: isPhotoOrPrivacy ? "privacy_photos" : isFakeAccount ? "fake_account" : "online_harassment"
+    };
+  }
+
+  // 3F. Amenazas, intimidación o miedo en el recreo / salida
+  if (includesAny(currentText, SIGNALS.threatsIntimidation)) {
+    return {
+      category: "threats_intimidation",
+      priority: 84,
+      subType: includesAny(currentText, ["recreo", "salir", "salida", "insegur*"])
+        ? "school_fear"
+        : "direct_threat"
+    };
+  }
+
+  // 3G. Discriminación
+  if (includesAny(currentText, SIGNALS.discrimination)) {
+    return { category: "discrimination", priority: 80, subType: "prejudice_exclusion" };
+  }
+
+  // 3H. Rumores, chismes y difamación
+  if (includesAny(currentText, SIGNALS.rumorsGossip)) {
+    return { category: "rumors_gossip", priority: 78, subType: "false_rumors" };
+  }
+
+  // 3I. Exclusión social y aislamiento en grupos
+  if (includesAny(currentText, SIGNALS.socialExclusion)) {
+    return { category: "social_exclusion", priority: 76, subType: "group_exclusion" };
+  }
+
+  // 3J. Insultos, apodos ofensivos y humillaciones
+  if (includesAny(currentText, SIGNALS.nicknamesHumiliation)) {
+    const byAppearance = includesAny(currentText, [
+      "apariencia", "cuerpo", "peso", "gord*", "flac*", "fe*", "nariz", "pelo", "altura", "bajit*", "aspecto", "cara"
+    ]);
+    const inPublic = includesAny(currentText, ["delante de", "toda la clase", "todos", "publico", "salon"]);
+    return {
+      category: "nicknames_humiliation",
+      priority: 75,
+      subType: byAppearance ? "appearance_mockery" : inPublic ? "public_humiliation" : "verbal_insults"
+    };
+  }
+
+  // 3K. Conflictos entre amigos o presión de grupo
+  if (includesAny(currentText, SIGNALS.peerConflictFriendship)) {
+    const isPeerPressure = includesAny(currentText, ["presion*", "obligan a", "para encajar"]);
+    return {
+      category: "peer_conflict",
+      priority: 72,
+      subType: isPeerPressure ? "peer_pressure" : "friendship_dispute"
+    };
+  }
+
+  // 3L. Bullying y acoso escolar general
+  if (includesAny(currentText, SIGNALS.bullyingGeneral)) {
+    return { category: "bullying_general", priority: 74, subType: "repeated_harassment" };
+  }
+
+  // 3M. Soledad, tristeza, bienestar emocional y vergüenza de pedir ayuda
+  if (includesAny(currentText, SIGNALS.lonelinessEmotional)) {
+    const isShameOrFearToSpeak = includesAny(currentText, [
+      "verguenza", "miedo de contar", "miedo a que no me crean", "no se como pedir ayuda"
+    ]);
+    return {
+      category: "loneliness_emotional",
+      priority: 70,
+      subType: isShameOrFearToSpeak ? "fear_to_ask_help" : "loneliness"
+    };
+  }
+
+  // 3N. Cómo pedir ayuda o identificar a un adulto de confianza
+  if (includesAny(currentText, SIGNALS.howToAskHelp)) {
+    return { category: "how_to_ask_help", priority: 68, subType: "trusted_adult_guide" };
+  }
+
+  // 3O. Consultas informativas sobre qué es el bullying / ciberacoso
+  if (includesAny(currentText, SIGNALS.educationalInfo)) {
+    return { category: "educational_info", priority: 65, subType: "concept_explanation" };
+  }
+
+  // ---------------------------------------------------------------------------
+  // NIVEL 4: RESOLUCIÓN CONTEXTUAL MULTI-TURNO
+  // Si el estudiante envía un mensaje de seguimiento ("¿Y qué hago si no me creen?",
+  // "Pasa todos los días en el recreo", "Tengo miedo de decirlo", "Es de mi salón"),
+  // heredamos el contexto de los últimos mensajes de la conversación.
+  // ---------------------------------------------------------------------------
+  if (previousText) {
+    const contextFollowUp = classifyIntent({
+      ...ctx,
+      currentText: recentText,
+      previousText: ""
+    });
+    if (contextFollowUp.category !== "general_orientation") {
+      return {
+        ...contextFollowUp,
+        isContextualFollowUp: true
+      };
+    }
+  }
+
+  // Si pregunta directamente "¿qué hago?" sin contexto previo específico
+  if (ctx.asksDirectAction) {
+    return { category: "how_to_ask_help", priority: 60, subType: "direct_action_request" };
+  }
+
+  return { category: "general_orientation", priority: 10, subType: "open_listening" };
+}
+
+// -----------------------------------------------------------------------------
+// 7. MOTOR DE SELECCIÓN DETERMINISTA CON MEMORIA ANTI-REPETICIÓN
+// -----------------------------------------------------------------------------
+let responseCounter = 0;
+
+function hashText(value = "") {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
@@ -62,998 +838,936 @@ function hashText(value) {
   return hash >>> 0;
 }
 
-function pick(options, seed, salt) {
-  return options[hashText(`${seed}|${salt}`) % options.length];
-}
-
-function compose(seed, banks, salt, questionOverride = null) {
-  // Cada bloque se combina con los demás. No son respuestas copiadas 500 veces:
-  // son miles de combinaciones redactadas con piezas distintas y coherentes.
-  return [
-    pick(banks.openings, seed, `${salt}-opening`),
-    pick(banks.validation, seed, `${salt}-validation`),
-    pick(banks.nextSteps, seed, `${salt}-next`),
-    questionOverride || pick(banks.questions, seed, `${salt}-question`)
-  ].join(" ");
-}
-
-const stopNames = new Set([
-  "esta", "este", "esa", "ese", "persona", "chico", "chica", "compañero",
-  "compañera", "amigo", "amiga", "profesor", "profesora", "profe", "docente",
-  "maestro", "maestra", "director", "directora", "me", "te", "se", "mi", "mis",
-  "tu", "su", "que", "quien", "cuando", "donde", "alguien", "nadie", "todos",
-  "todas", "porque", "pero", "tambien", "solo", "sola", "mucho", "mucha",
-  "muchos", "muchas", "siempre", "nunca", "hoy", "ayer", "antes", "ahora"
-]);
-
-function formatFirstName(raw) {
-  const normalized = normalize(raw).split(" ")[0] || "";
-  if (normalized.length < 2 || normalized.length > 20 || stopNames.has(normalized)) return null;
-  if (!/^[a-zñü]+$/i.test(normalized)) return null;
-  return normalized.charAt(0).toLocaleUpperCase("es") + normalized.slice(1);
-}
-
-function extractPersonName(message = "") {
-  const patterns = [
-    /\b(?:persona|compañero|compañera|amigo|amiga|profesor|profesora|profe|docente|maestro|maestra)\s*\(\s*([a-zñü]{2,20})\s*\)/i,
-    /\b(?:persona|compañero|compañera|amigo|amiga|profesor|profesora|profe|docente|maestro|maestra)\s+(?:llamado|llamada|de nombre|que se llama)\s+([a-zñü]{2,20})\b/i,
-    /\b(?:se llama|le dicen|de nombre)\s+([a-zñü]{2,20})\b/i,
-    /\b(?:esta persona|esa persona|mi compañero|mi compañera|mi amigo|mi amiga)\s*,?\s+([A-ZÑÜ][a-zñü]{1,19})\b/,
-    /\b(?:profesor|profesora|profe|docente|maestro|maestra|compañero|compañera|amigo|amiga)\s+([A-ZÑÜ][a-zñü]{1,19})\b/,
-    /^\s*([A-ZÑÜ][a-zñü]{1,19})\s+(?:me|nos)\s+(?:molesta|insulta|humilla|amenaza|excluye|acosa|hostiga)\b/
-  ];
-
-  for (const pattern of patterns) {
-    const match = String(message).match(pattern);
-    if (match?.[1]) {
-      const name = formatFirstName(match[1]);
-      if (name) return name;
+function pickVariant(options = [], seed = "", salt = "", previousAssistantText = "") {
+  if (!Array.isArray(options) || options.length === 0) return "";
+  const baseIndex = hashText(`${seed}|${salt}`) % options.length;
+  for (let offset = 0; offset < options.length; offset += 1) {
+    const candidate = options[(baseIndex + offset) % options.length];
+    if (!previousAssistantText || !previousAssistantText.includes(candidate)) {
+      return candidate;
     }
   }
-  return null;
+  return options[baseIndex];
 }
 
-function findRecentPersonName(userMessages) {
-  for (const message of [...userMessages].reverse()) {
-    const name = extractPersonName(message);
-    if (name) return name;
-  }
-  return null;
-}
+// -----------------------------------------------------------------------------
+// 8. BANCOS MODULARES DE RESPUESTAS (6 A 10 VARIANTES POR COMPONENTE)
+// -----------------------------------------------------------------------------
+const RESPONSE_BANKS = {
+  // 8.1 PROTOCOLO ESPECIAL: VIOLENCIA SEXUAL Y ABUSO (10 PUNTOS OBLIGATORIOS)
+  sexual_violence_protocol: {
+    recognitionAndNoBlame: [
+      "Lo que me estás contando es sumamente grave e importante. Quiero decirte con total claridad que nada de lo ocurrido es tu culpa: ninguna persona tiene derecho a tocar tu cuerpo, forzarte ni cruzar tus límites sin tu consentimiento.",
+      "Gracias por tener la valentía de expresar algo tan delicado. Lo que describes es una agresión grave y jamás es responsabilidad de quien la sufre; tú no hiciste nada malo y mereces protección inmediata.",
+      "Te escucho con total respeto y sin juzgarte. Lo que mencionas es muy serio y quiero que tengas la seguridad de que la culpa nunca es tuya, sin importar quién sea la persona ni lo que te haya dicho.",
+      "Siento profundamente que hayas pasado por una situación tan grave. Nadie, bajo ninguna circunstancia, tiene permiso para lastimarte ni obligarte a algo sexual; tú no tienes la culpa de lo sucedido.",
+      "Lo que relatas es una situación grave que vulnera tu integridad. No estás exagerando ni tienes por qué cargar con culpa o vergüenza: la responsabilidad es únicamente de quien cometió la agresión.",
+      "Quiero que sepas que te creo y que tomo muy en serio lo que dices. Es un hecho grave, no es tu culpa en ningún sentido y tienes derecho a recibir cuidado, protección y ayuda segura ahora mismo."
+    ],
+    medicalAndSafetyUrgent: [
+      "Tu salud y tu seguridad física son lo primero: si sufriste una agresión física reciente, tienes dolor o alguna lesión en una zona íntima, es fundamental que recibas atención médica urgente en el centro de salud u hospital más cercano (en Perú, todos los establecimientos del MINSA entregan atención de emergencia gratuita). Si estás en peligro en este instante, aléjate hacia un lugar donde haya otras personas y pide auxilio inmediato.",
+      "Por favor prioriza tu bienestar físico ahora mismo: si hay dolor, lesión o fue una agresión reciente, acude cuanto antes a un hospital o centro de salud con un adulto protector para que personal médico te revise con cuidado. Si sientes que corres peligro inmediato, sal hacia un espacio seguro acompañado y comunícate con emergencias.",
+      "Es muy importante cuidar tu cuerpo y tu seguridad: ante cualquier lesión íntima, dolor o contacto forzado reciente, necesitas valoración médica urgente por personal de salud, incluso si te da temor o vergüenza. Nunca intentes resolver una lesión por tu cuenta ni te quedes a solas cerca de quien te lastimó.",
+      "Lo más urgente en este momento es que estés en un lugar seguro y recibas atención médica inmediata si hubo fuerza física, dolor o lesiones. Un médico o centro de salud sabrá atenderte con reserva y cuidado; no enfrentes nunca a la persona agresora por tu cuenta.",
+      "Tu protección inmediata es prioritaria: aléjate de cualquier espacio donde puedas volver a quedar a solas con esa persona y busca atención médica de urgencia si el hecho fue reciente o sientes malestar físico. No tienes que pasar por esto en soledad.",
+      "Ante una agresión de este tipo, lo primordial es resguardar tu vida y tu salud física: busca un entorno seguro lejos del agresor y acude con urgencia a un servicio médico para recibir atención integral y preventiva."
+    ],
+    trustedAdultByContext: {
+      family: [
+        "Como la persona involucrada forma parte de tu entorno familiar o de tu casa, busca de inmediato a otro adulto seguro que no esté implicado y que sí pueda protegerte (como otro familiar de confianza, tu tutor o psicólogo del colegio, o personal de un centro de salud).",
+        "Si quien te hizo daño vive contigo o es un familiar, no guardes silencio: acude hoy mismo a una persona adulta fuera de esa situación —como un docente, orientador escolar, vecina de confianza o autoridad de protección— que pueda ponerte a salvo."
+      ],
+      authority: [
+        "Si la persona implicada es un profesor o adulto del colegio, recuerda que su autoridad no le da ningún derecho sobre ti. Acude de inmediato a tu mamá, papá, familiar cercano o a otra autoridad segura que no esté involucrada para que te protejan y no vuelvas a quedar a solas con esa persona.",
+        "Cuando el agresor es un adulto de la escuela, nunca debes quedarte a solas con él ni aceptar guardar secretos. Cuéntaselo enseguida a tu familia o a un adulto protector fuera de ese vínculo para que activen tu protección inmediata."
+      ],
+      other: [
+        "Busca ahora mismo a un adulto de tu entera confianza que pueda protegerte y acompañarte, como tu mamá, tu papá, un familiar cercano, tu tutora o el psicólogo de tu colegio.",
+        "Acércate hoy mismo a una persona adulta segura que no esté implicada en lo ocurrido —un familiar protector, docente de confianza u orientador escolar— para que no tengas que cargar con esto a solas."
+      ]
+    },
+    privacyAndSimplePhrase: [
+      "No necesitas contarme detalles íntimos ni responder preguntas sobre tu cuerpo aquí, y tampoco tienes que sentirte presionado a hacer una denuncia formal antes de estar protegido y recibir atención médica. Para pedir ayuda hoy mismo a un adulto de confianza, puedes decirle o mostrarle esta frase: «Me pasó algo grave con una persona, tengo miedo y necesito que me protejas y me lleves al médico sin hacerme sentir culpable».",
+      "Recuerda que soy un sistema de orientación y no reemplazo la atención médica ni psicológica profesional; además, no hace falta que escribas detalles íntimos en el chat para merecer ayuda. Cuando hables con el adulto de confianza que elijas, puedes leerle esto: «Alguien cruzó mis límites sin mi consentimiento, no me siento bien y necesito tu apoyo y protección ahora mismo».",
+      "Aquí nunca te pediré descripciones gráficas ni detalles privados, y nadie debe presionarte antes de garantizar tu seguridad y tu salud. Si te cuesta encontrar las palabras frente a un adulto seguro, muéstrale este mensaje o dile: «Necesito contarte algo muy delicado que me hicieron; por favor escúchame con calma y ayúdame a estar a salvo».",
+      "No tienes obligación de relatar detalles íntimos en este chat ni de enfrentar a quien te agredió; primero está tu resguardo físico y emocional con profesionales reales. Puedes iniciar la conversación con un adulto protector diciendo simplemente: «Alguien me lastimó y me hizo daño sin mi permiso; necesito que me acompañes y me cuides».",
+      "Tranquilo: no necesitas dar más detalles íntimos por aquí ni apresurarte a trámites antes de recibir resguardo y cuidado médico. Para romper el silencio con una persona adulta segura, puedes escribirle en un papel o por mensaje: «Pasó algo muy grave que no es mi culpa y necesito ayuda urgente de un adulto en quien confío».",
+      "Tu privacidad y tranquilidad emocional son sagradas: no hace falta que expliques detalles físicos aquí. Lo esencial es que un adulto protector te acompañe ya; puedes decirle: «Me sucedió algo grave que me da miedo contar, por favor acompáñame a recibir ayuda médica y protección»."
+    ],
+    groomingSpecificAdvice: [
+      "Lo que describes sobre el pedido o presión de fotografías íntimas o amenazas para callar es una forma grave de abuso y coacción: nunca envíes imágenes ni cedas a chantajes, porque tú no tienes la culpa.",
+      "Que un adulto o cualquier persona te pida fotos íntimas, te haga comentarios sexuales o te amenace para guardar silencio es un delito y una forma de violencia sexual; no tienes por qué obedecer ni sentir vergüenza."
+    ]
+  },
 
-function hasNickname(message) {
-  return /\b(?:me apoda|me apodan|me puso un apodo|me ponen apodos|me ponen un apodo|me llama|me llaman|me dice|me dicen|se burla llamandome|se burlan llamandome)\b/.test(normalize(message));
-}
+  // 8.2 PROTOCOLO INDEPENDIENTE: RIESGO DE AUTOLESIÓN O SUICIDIO
+  self_harm_crisis: {
+    openings: [
+      "Siento muchísimo que estés sintiendo un dolor tan grande en este momento. Quiero que sepas que tu vida tiene un valor inmenso y que no tienes que atravesar esta oscuridad en soledad.",
+      "Gracias por confiar y expresar lo que estás sintiendo. Sé que ahora mismo todo puede parecer insoportable, pero lo que te pasa importa de verdad y mereces recibir apoyo real hoy mismo.",
+      "Te leo con mucho respeto y cuidado. Sentirse así de abrumado duele profundamente, pero no estás solo y existen personas preparadas para acompañarte y ayudarte a aliviar este peso.",
+      "Lamento de corazón que estés pasando por un momento tan difícil. Aunque ahora sientas que no hay salida, este dolor se puede atender con ayuda humana y profesional; tu bienestar es lo más importante.",
+      "Qué importante que hayas puesto en palabras lo que sientes en lugar de callarlo. No eres una carga para nadie y mereces estar a salvo y acompañado en este instante.",
+      "Escucho cuánto estás sufriendo ahora mismo. Por favor no te quedes a solas con estos pensamientos: tu vida importa muchísimo y hay apoyo seguro disponible para ti."
+    ],
+    safetyAction: [
+      "Como soy un chatbot educativo, no puedo sustituir la ayuda de un profesional ni protegerte físicamente, por eso te pido que des un paso inmediato: aléjate de cualquier objeto con el que puedas lastimarte, sal a un espacio donde haya otras personas y busca ahora mismo a un adulto de confianza (un familiar, docente, tutor o vecino seguro).",
+      "En este momento lo primordial es mantenerte a salvo: no te quedes encerrado ni a solas, acércate enseguida a una persona adulta en quien confíes y dile con claridad que no te sientes seguro contigo mismo y que necesitas compañía.",
+      "Tu seguridad hoy no puede esperar: deja cualquier cosa que pueda hacerte daño, busca la compañía inmediata de un familiar, profesor, orientador o adulto protector y permíteles ayudarte a contactar a un profesional de salud.",
+      "Por favor prioriza tu vida en este instante: ve junto a una persona adulta segura de tu entorno y pídele que se quede contigo y te lleve a recibir apoyo médico o psicológico de urgencia.",
+      "Necesitas el acompañamiento de una persona real ahora mismo: acude a un adulto de confianza en casa o en el colegio y muéstrale lo que escribiste si te cuesta hablar en voz alta.",
+      "No tienes que explicar todo lo que sientes de golpe; basta con que te acerques ahora mismo a un adulto seguro y le digas: «Me siento muy mal, tengo pensamientos de hacerme daño y necesito que me acompañes hoy»."
+    ]
+  },
 
-function detectNicknameTheme(text) {
-  if (includesAny(text, ["gord", "flac", "peso", "cuerpo", "aspect", "aparienc", "fe", "nariz", "pelo", "piel", "altura", "bajit"])) {
-    return "appearance";
-  }
-  if (includesAny(text, ["tont", "idiot", "inutil", "burro", "burra", "brut", "lent", "inteligencia", "notas"])) {
-    return "ability";
-  }
-  return "general";
-}
+  // 8.3 PROTOCOLO INDEPENDIENTE: PELIGRO INMEDIATO Y AYUDA URGENTE
+  immediate_danger: {
+    openings: [
+      "Tu seguridad física en este momento es la prioridad absoluta. Si sientes que estás en peligro o que pueden hacerte daño ahora mismo, no esperes a resolverlo por este chat.",
+      "Te leo y lo más importante ahora mismo es que te pongas a salvo. Nadie tiene derecho a golpearte, encerrarte ni amenazarte.",
+      "Esta es una situación de urgencia y tu protección va primero que cualquier otra cosa. No intentes enfrentar a quien te amenaza ni quedarte a solas.",
+      "Lamento mucho que estés viviendo este momento de temor. Tu integridad es lo principal y necesitas resguardo inmediato de personas reales.",
+      "Escucho que no te sientes a salvo ahora mismo y quiero darte pasos directos para protegerte de inmediato.",
+      "Si estás corriendo riesgo en este instante, actúa primero para resguardar tu seguridad física antes de seguir escribiendo."
+    ],
+    urgentSteps: [
+      "Si puedes hacerlo sin aumentar el riesgo, aléjate de inmediato hacia un lugar iluminado o donde haya otras personas (la dirección del colegio, la casa de un familiar o vecino seguro, una tienda o una comisaría) y pide ayuda en voz alta a un adulto de confianza.",
+      "No te quedes a solas: busca enseguida a un adulto protector cercano —un docente, director, familiar seguro, sereno o policía— y dile claramente: «Estoy en peligro ahora mismo y necesito que me protejan».",
+      "Si estás en el colegio, dirígete directo a Tutoría, Dirección o donde haya varios profesores; si estás en la calle o en casa y hay agresión activa, sal a un sitio seguro con vecinos de confianza o comunícate de inmediato con los servicios de emergencia.",
+      "Prioriza salir de la zona de riesgo sin confrontar a la persona agresora. Acércate a adultos que puedan resguardarte físicamente en este momento y llama a los teléfonos de emergencia.",
+      "Si no puedes salir del lugar donde estás, comunícate de inmediato por teléfono o mensaje con un familiar seguro o con la central de emergencias indicando dónde te encuentras para que acudan a ayudarte.",
+      "Recuerda que Lumy es una herramienta de orientación y no puede acudir físicamente: busca compañía adulta inmediata y activa la ayuda de emergencia de tu localidad."
+    ]
+  },
 
-const signals = {
-  authority: ["profesor", "profesora", "profe", "docente", "maestro", "maestra", "director", "directora", "entrenador", "entrenadora", "tutor", "tutora", "auxiliar"],
-  authorityAbuse: ["acosa", "acosan", "acosando", "hostiga", "hostigando", "molesta", "molestan", "insulta", "insultan", "humilla", "humillan", "amenaza", "amenazan", "grita", "me toca", "me toca sin permiso", "me pide fotos", "me pide fotos intimas", "me pide que no cuente", "me dice que sea secreto", "me busca a solas", "me escribe cosas sexuales", "me hace comentarios sexuales", "me hace comentarios sobre mi cuerpo", "me invita a estar a solas", "me hace sentir incomodo", "me hace sentir incomoda", "me sigue", "me persigue"],
-  physical: ["golpea", "golpean", "golpeo", "pega", "pegan", "empuja", "empujan", "empujo", "patada", "agrede", "agreden", "me tira al suelo", "me tira del pelo", "me toca sin permiso", "me fuerza"],
-  online: ["whatsapp", "redes", "internet", "grupo de chat", "chat", "publica fotos", "sube fotos", "difunde", "mensaje", "mensajes", "cuenta falsa", "ciberacoso", "me escribe", "me manda mensajes", "me etiqueta", "me expone"],
-  social: ["excluye", "excluyen", "me dejan fuera", "no me incluyen", "no me invitan", "me ignoran", "me aislan", "me apartan", "no me hablan"],
-  verbal: ["insulta", "insultan", "insulto", "burl", "apodo", "apoda", "sobrenombre", "humilla", "ridiculiza", "se rie de mi", "se rien de mi", "se burla de mi", "me llama", "me dicen cosas", "me pone nombres", "me ponen nombres"],
-  threat: ["amenaza", "amenazan", "chantaje", "intimida", "me espera afuera", "me persigue", "me da miedo que", "me advierte que"],
-  general: ["molesta", "molestan", "acosa", "acosan", "hostiga", "hostigan", "me trata mal", "me hacen sentir mal", "me fastidia", "me fastidian"]
-};
+  // 8.4 VIOLENCIA FAMILIAR Y PROBLEMAS EN EL HOGAR
+  family_violence: {
+    openings: [
+      "Siento mucho que estés viviendo agresiones o miedo dentro de tu propia casa.",
+      "Gracias por animarte a contar algo tan difícil; lo que pasa en tu familia merece atención y cuidado.",
+      "Te escucho con mucho respeto. Tener miedo de volver a casa o sufrir maltrato de familiares es una carga muy dura.",
+      "Lamento profundamente que las personas adultas de tu hogar te estén tratando de esa manera.",
+      "Es muy valiente de tu parte hablar sobre lo que ocurre en tu familia; no tienes por qué callarlo.",
+      "Comprendo que te sientas atrapado o asustado cuando el problema ocurre en tu propio hogar."
+    ],
+    validations: [
+      "Quiero que tengas muy claro que ningún golpe, amenaza ni humillación constante está justificado como forma de crianza o castigo. Tú no tienes la culpa.",
+      "La casa debería ser un lugar seguro para ti; la violencia física o psicológica de los padres o familiares vulnera tus derechos y nunca es responsabilidad tuya.",
+      "Mereces crecer en un ambiente libre de golpes, gritos e insultos. Que sean tus padres o familiares no les da derecho a lastimarte.",
+      "Es totalmente comprensible que sientas miedo o confusión, pero no tienes que soportar maltratos en silencio por tratarse de tu familia.",
+      "Tus derechos como estudiante y menor de edad te protegen también dentro de tu hogar; pedir ayuda externa es legítimo y necesario.",
+      "No eres un mal hijo ni estás traicionando a tu familia por buscar protección cuando te lastiman o te amenazan."
+    ],
+    actions: [
+      "Busca apoyo en un adulto seguro fuera de ese conflicto: puedes hablar hoy mismo con tu tutora, el psicólogo del colegio, el responsable de Convivencia Escolar o un familiar cercano que sí te proteja (como una tía o abuelos de confianza).",
+      "Si hoy tienes miedo de regresar a tu casa porque pueden golpearte, avísale antes de la hora de salida a tu tutor, psicólogo escolar o director para que activen el protocolo de protección con las autoridades.",
+      "No intentes enfrentar físicamente a un adulto enojado en casa. Si empieza una agresión, resguárdate en un lugar seguro y pide ayuda a otro familiar, vecino de confianza o institución de protección infantil.",
+      "Puedes contarle lo que ocurre a un docente u orientador del colegio diciendo: «En mi casa me están golpeando / amenazando, tengo miedo de volver y necesito que me ayuden a buscar protección».",
+      "Además del colegio, recuerda que existen defensorías y líneas especializadas gratuitas que protegen a niñas, niños y adolescentes cuando sufren violencia en su propio hogar.",
+      "Si tienes marcas, golpes o amenazas recientes, muéstraselas o cuéntaselas al responsable de tutoría o a la DEMUNA de tu distrito para que intervengan por tu seguridad."
+    ],
+    questions: [
+      "¿En este momento estás en el colegio o en un lugar donde te sientes a salvo?",
+      "¿Hay algún familiar fuera de tu casa o algún profesor de confianza a quien puedas contarle esto hoy antes de regresar?",
+      "¿Necesitas que preparemos juntos una frase breve para explicárselo a tu tutor o al psicólogo del colegio?"
+    ]
+  },
 
-function classifyBehavior(text) {
-  if (includesAny(text, signals.physical)) return "physical";
-  if (includesAny(text, signals.online)) return "online";
-  if (includesAny(text, signals.threat)) return "threat";
-  if (includesAny(text, signals.social)) return "social";
-  if (includesAny(text, signals.verbal)) return "verbal";
-  if (includesAny(text, signals.general)) return "general";
-  return "unknown";
-}
+  // 8.5 PROBLEMAS CON PROFESORES Y ADULTOS DEL COLEGIO
+  authority_problem: {
+    openings: [
+      "Gracias por confiarme esta situación; sé que es muy difícil hablar cuando el problema viene de un profesor o adulto del colegio.",
+      "Lamento mucho que un docente o autoridad escolar te esté haciendo sentir intimidado o humillado.",
+      "Te escucho y tomo muy en serio lo que cuentas. En el colegio todos los adultos tienen la obligación de tratarte con respeto.",
+      "Entiendo perfectamente que sientas temor o incomodidad al tratarse de una persona que tiene autoridad en tu escuela.",
+      "Qué bueno que no te quedes callado ante este trato; lo que describes con ese adulto del colegio merece ser atendido.",
+      "Nadie debería ir a clases con miedo a la actitud de un docente o auxiliar; gracias por contarlo."
+    ],
+    validations: [
+      "Que una persona sea profesor, auxiliar o autoridad jamás le da derecho a humillarte, gritarte, amenazarte ni ridiculizarte frente a los demás.",
+      "No es tu culpa si un adulto del colegio abusa de su posición; pedir ayuda o reportar un mal trato docente no es portarse mal ni faltar el respeto.",
+      "Tienes derecho a aprender en un ambiente seguro y digno. Las normas educativas prohíben estrictamente cualquier trato humillante o intimidación del personal hacia los estudiantes.",
+      "Es normal que temas represalias en tus notas o que pienses que no te van a creer, pero la ley protege a los estudiantes frente al maltrato de cualquier trabajador escolar.",
+      "Tu bienestar vale mucho más que guardar silencio para evitar problemas; ningún docente puede exigirte callar un trato inadecuado.",
+      "No tienes que soportar gritos, burlas ni intimidaciones de un adulto como si fueran parte normal de la disciplina escolar."
+    ],
+    actions: [
+      "Cuéntaselo hoy mismo a tu mamá, papá o apoderado con detalles claros de qué dijo o hizo ese adulto y en qué momento ocurrió, para que ellos acudan a la Dirección del colegio.",
+      "Dentro del colegio, acude a otra autoridad que no sea la persona involucrada —como el coordinador de Tutoría, el psicólogo escolar, el responsable de Convivencia o el director— y pide que te escuchen en presencia de un adulto de confianza.",
+      "Evita quedarte a solas con ese profesor o adulto para reclamarle por tu cuenta; siempre es más seguro que intervenga tu familia o el área de tutoría.",
+      "Si ocurrió delante de tu salón, anota la fecha, la hora y qué compañeros estuvieron presentes; eso ayuda mucho cuando tus padres o el comité de convivencia revisen el caso.",
+      "Puedes explicárselo a tu familia diciendo: «Un profesor en el colegio me está intimidando / tratando mal en clase y necesito que me acompañen a hablar con dirección».",
+      "Recuerda que cuando el agresor es personal de la institución educativa, el colegio tiene la obligación legal de registrar el caso y tomar medidas de protección para que no sufras represalias."
+    ],
+    questions: [
+      "¿Ya pudiste comentarle a tu mamá, papá o algún familiar lo que está pasando con ese adulto del colegio?",
+      "¿Ocurre durante las clases delante de tus compañeros o cuando estás a solas?",
+      "¿Hay otro docente o tutor en tu colegio con quien sí te sientas seguro para hablar hoy?"
+    ]
+  },
 
-function isAuthorityConcern(text) {
-  return includesAny(text, signals.authority) && includesAny(text, signals.authorityAbuse);
-}
+  // 8.6 VIOLENCIA FÍSICA ESCOLAR
+  physical_violence: {
+    openings: [
+      "Siento mucho que te hayan golpeado o lastimado; ninguna agresión física debe pasarse por alto.",
+      "Lo que me cuentas es serio: cuando hay golpes, empujones o daño físico, tu protección tiene que ser inmediata.",
+      "Gracias por decírmelo. Entiendo perfectamente que tengas miedo de que vuelvan a agredirte.",
+      "Lamento que hayas pasado por una situación de violencia física en tu entorno escolar.",
+      "Te escucho con atención. Nadie tiene derecho a tocar tu cuerpo para empujarte, golpearte o hacerte daño.",
+      "Es muy importante actuar a tiempo cuando alguien pasa de las palabras a las agresiones físicas."
+    ],
+    validations: [
+      "La violencia física nunca es un juego ni una broma pesada, y tú no tienes la culpa de que alguien haya decidido agredirte.",
+      "Defender tu integridad pidiendo ayuda adulta no es ser cobarde ni «soplón»; es la forma más inteligente y segura de cortar la violencia.",
+      "No tienes que devolver el golpe ni pelear para hacerte respetar: responder con violencia suele ponerte en mayor peligro y causarte sanciones injustas.",
+      "Es completamente válido sentir miedo o rabia después de que te lastiman; mereces estudiar sin temor a que te golpeen.",
+      "Ningún compañero tiene permiso para agredirte físicamente bajo ninguna excusa.",
+      "Tu seguridad física en el colegio es una responsabilidad directa de los adultos de la institución y de tu familia."
+    ],
+    actions: [
+      "Si te lastimaste o tienes dolor por el golpe o empujón, avisa de inmediato a un profesor, auxiliar o a tu familia para que te revisen en el tópico o en un centro de salud.",
+      "No te quedes a solas en los lugares donde te agredieron (como baños, escaleras o la salida); mantente cerca de tus amigos o de zonas vigiladas por docentes y auxiliares.",
+      "Informa hoy mismo a tu tutor, al encargado de Convivencia Escolar o a tus padres indicando quién te agredió, dónde fue y si te están amenazando con volver a hacerlo.",
+      "Pide a tu familia que solicite en el colegio medidas de protección inmediatas y el registro del hecho en el Libro de Registro de Incidencias.",
+      "Si tienes miedo a la hora de la salida o en el recreo, acuerda con tu tutor o con tus padres que un adulto te acompañe o supervise ese momento.",
+      "Puedes decirle directamente a tu profesor o familiar: «Me golpearon / empujaron hoy y tengo miedo de que vuelvan a agredirme; necesito que intervengan por mi seguridad»."
+    ],
+    questions: [
+      "¿Tienes alguna herida o dolor físico en este momento que necesite revisión médica?",
+      "¿Le avisaste ya a algún profesor, auxiliar o a tu familia sobre esta agresión?",
+      "¿En qué momento del día sientes más riesgo de que intenten agredirte de nuevo?"
+    ]
+  },
 
-function isImmediateDanger(text) {
-  return includesAny(text, [
-    "me esta pegando", "me esta golpeando", "me amenaza ahora",
-    "esta aqui y me amenaza", "estoy en peligro", "no estoy a salvo",
-    "me quiere hacer daño ahora", "me quiere hacer dano ahora", "no me deja salir",
-    "me esta siguiendo ahora", "tengo miedo de que me haga daño ahora", "tengo miedo de que me haga dano ahora"
-  ]);
-}
+  // 8.7 AMENAZAS, INTIMIDACIÓN Y MIEDO EN EL COLEGIO / RECREO / SALIDA
+  threats_intimidation: {
+    openings: [
+      "Comprendo que sientas miedo o intranquilidad; las amenazas y la intimidación deben tomarse muy en serio desde el primer momento.",
+      "Siento mucho que te estén haciendo pasar miedo en el colegio o a la hora de salir.",
+      "Gracias por contarme lo que ocurre. Nadie debería sentirse inseguro durante el recreo ni al terminar las clases.",
+      "Te escucho. Cuando alguien te amenaza o te intimida, es normal sentir tensión y temor, pero no estás solo.",
+      "Lo que describes no es algo menor: amenazar o quitar tus cosas mediante el miedo es una forma clara de violencia escolar.",
+      "Qué importante que busques orientación ahora; no hay que esperar a que una amenaza se cumpla para pedir protección."
+    ],
+    validations: [
+      "Sentir miedo ante una amenaza es una reacción natural para protegerte; contar lo que pasa demuestra valentía, no debilidad.",
+      "No tienes por qué caminar con miedo en tu propio colegio ni entregar tus cosas o tu tranquilidad porque alguien te intimida.",
+      "Las amenazas buscan aislarte para que no hables, por eso romper el silencio con un adulto seguro les quita ese poder sobre ti.",
+      "Tú no provocaste esta intimidación y tienes todo el derecho de exigir que el colegio cuide tu integridad en el recreo y a la salida.",
+      "Ninguna amenaza («si hablas te pego», «te espero afuera») debe guardarse en secreto.",
+      "Mereces disfrutar tus recreos y regresar a casa con total tranquilidad."
+    ],
+    actions: [
+      "Si te amenazan con esperarte a la salida del colegio, no salgas solo hoy: avisa antes a tu tutor, auxiliar o director y llama a un familiar para que vaya a recogerte.",
+      "Durante el recreo o cambios de hora,Ubícate cerca del patio principal donde estén los docentes o auxiliares de turno, o quédate acompañado de compañeros de confianza.",
+      "Cuéntale con precisión a tus padres y a tu tutor quién te está amenazando y qué te dijo exactamente, para que el colegio active medidas de resguardo inmediato.",
+      "Nunca aceptes ir a hablar «a solas» a un rincón, baño o callejón con la persona o grupo que te intimida.",
+      "Si las amenazas también te llegan por celular o redes, no las borres: muéstraselas a tus padres y al responsable de Convivencia Escolar como evidencia.",
+      "Puedes pedir apoyo hoy mismo diciendo: «Me están amenazando en el colegio / a la salida y no me siento seguro; necesito que me acompañen y tomen medidas»."
+    ],
+    questions: [
+      "¿La amenaza es para hoy a la salida del colegio o ocurre durante los recreos?",
+      "¿Cuentas con un familiar que pueda ir a recogerte hoy o hablar con la dirección del colegio?",
+      "¿Las amenazas han sido en persona o también te han escrito por mensajes?"
+    ]
+  },
 
-function crisisReply(text) {
-  const explicitlyDenyingRisk = /\bno\s+(?:quiero|pienso|voy a)\s+(?:suicidarme|suicidar|matarme|quitarme la vida|hacerme daño|hacerme dano)\b/.test(text);
-  const directRisk = !explicitlyDenyingRisk && (
-    /\b(?:quiero|voy a|pienso en|estoy pensando en|he pensado en|me quiero)\s+(?:suicidarme|suicidar|matarme|quitarme la vida|morir)\b/.test(text) ||
-    includesAny(text, ["no quiero seguir viviendo", "no quiero vivir", "quiero acabar con mi vida", "voy a acabar con mi vida", "quiero desaparecer para siempre", "quiero hacerme daño", "quiero hacerme dano", "voy a lastimarme", "me voy a lastimar", "no puedo evitar hacerme daño", "no puedo evitar hacerme dano"])
-  );
+  // 8.8 CIBERACOSO Y VIOLENCIA EN REDES / INTERNET
+  cyberbullying: {
+    openings: [
+      "Lamento mucho lo que estás pasando en redes o por mensajes; el ciberacoso duele y afecta tanto como el acoso en persona.",
+      "Gracias por contármelo. Que ocurra a través de una pantalla no lo hace menos grave ni menos real.",
+      "Entiendo tu preocupación y malestar: ver que suben fotos sin tu permiso, crean cuentas falsas o te atacan por chat es muy invasivo.",
+      "Te escucho y quiero ayudarte a actuar con calma y seguridad frente a lo que está pasando en internet.",
+      "Es muy agotador sentir que las burlas o amenazas continúan hasta en el celular; no tienes que enfrentar esto por tu cuenta.",
+      "Haces muy bien en buscar orientación: la violencia digital vulnera tu privacidad y tiene formas concretas de frenarse y denunciarse."
+    ],
+    validations: [
+      "Nadie tiene derecho a publicar fotografías tuyas sin tu consentimiento, difundir tus datos privados ni crear perfiles falsos para dañarte.",
+      "No es tu culpa que otras personas usen la tecnología para agredir, humillar o presionar; tu intimidad merece respeto absoluto.",
+      "No tienes obligación de responder a mensajes ofensivos ni de ceder ante presiones para enviar fotografías tuyas.",
+      "En el mundo digital también existen reglas y responsabilidades: el ciberacoso entre estudiantes también es atendido y sancionado por el colegio.",
+      "Sentir enojo, ansiedad o vergüenza cuando exponen tu imagen sin permiso es totalmente comprensible, pero quienes actuaron mal son ellos, no tú.",
+      "Nunca cedas a chantajes por internet: entregar lo que te piden no detiene al agresor, en cambio pedir ayuda adulta sí te protege."
+    ],
+    actions: [
+      "No respondas a las provocaciones ni entres en discusiones en el chat. Antes de bloquear la cuenta, toma capturas de pantalla (donde se vea el usuario, fecha y enlaces) y muéstraselas a tus padres o a un adulto de confianza.",
+      "Si publicaron fotos tuyas sin permiso o crearon una cuenta falsa para burlarse, pide ayuda a un adulto para denunciar la publicación o el perfil directamente en las opciones de reporte de la red social (Instagram, TikTok, WhatsApp o Facebook) para que la eliminen.",
+      "Si te están presionando para enviar fotografías personales o íntimas, di que no cortando toda comunicación de inmediato, bloquea al usuario y cuéntaselo hoy mismo a un adulto seguro.",
+      "Configura tus cuentas como privadas, restringe quién puede enviarte mensajes o etiquetarte y nunca compartas contraseñas ni ubicación.",
+      "Si quienes hacen esto son compañeros de tu colegio o de un grupo de WhatsApp del salón, informa con las capturas a tu tutor y a Convivencia Escolar, ya que el colegio debe intervenir.",
+      "No reenvíes tú mismo las capturas o enlaces a otros compañeros para quejarte, así evitas que el contenido siga circulando; entrégalas solo a tu familia o a la autoridad escolar."
+    ],
+    questions: [
+      "¿Las personas que hacen esto son compañeros de tu colegio o es una cuenta desconocida?",
+      "¿Ya pudiste guardar capturas de pantalla para mostrárselas a un familiar o a tu tutor?",
+      "¿En qué red social o aplicación está ocurriendo esto?"
+    ]
+  },
 
-  if (directRisk) {
-    return "Gracias por decirlo. Siento mucho que estés pasando por algo tan intenso. Esto necesita apoyo de una persona real ahora, no solo de un chat: busca a un adulto de confianza y dile claramente que podrías hacerte daño. Quédate acompañado y, si el peligro es inmediato, pide ayuda a los servicios de emergencia de tu zona. No tienes que explicar todo de golpe; puedes mostrarle este mensaje.";
-  }
-  if (isImmediateDanger(text)) {
-    return "Tu seguridad es lo primero. Si puedes hacerlo sin aumentar el peligro, ve hacia un lugar donde haya otras personas y busca inmediatamente a un adulto de confianza. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia locales. No esperes a que este chat resuelva la situación.";
-  }
-  return null;
-}
+  // 8.9 DISCRIMINACIÓN
+  discrimination: {
+    openings: [
+      "Siento mucho que estés recibiendo tratos discriminatorios; nadie merece ser rechazado ni burlado por quién es.",
+      "Gracias por compartir esto conmigo. La discriminación duele profundamente, pero habla mal de quienes la ejercen, nunca de ti.",
+      "Te escucho con total respeto. Tu origen, tu piel, tu forma de hablar, tus capacidades o tu identidad son parte valiosa de ti.",
+      "Lamento que en tu entorno escolar haya personas que usen prejuicios para hacerte sentir menos.",
+      "Lo que cuentas es una forma de violencia e intolerancia que ningún estudiante tiene por qué soportar.",
+      "Qué importante que lo expreses: todas las personas tienen exactamente los mismos derechos y la misma dignidad."
+    ],
+    validations: [
+      "No hay absolutamente nada malo en tu origen, tu apariencia, tu cultura, tu condición o tu forma de ser; jamás debes sentir vergüenza de tu identidad.",
+      "En el Perú y en todo entorno educativo, la discriminación por raza, origen, idioma, discapacidad, condición económica o género está prohibida por ley.",
+      "La ignorancia o los prejuicios de otros compañeros no definen cuánto vales ni lo que eres capaz de lograr.",
+      "No tienes que cambiar tu forma de hablar ni esconder tus raíces para encajar con personas que no saben respetar.",
+      "Mereces estudiar en un aula donde la diversidad se respete y donde nadie use tus características personales como insulto.",
+      "Pedir que se detenga un trato discriminatorio es defender tu dignidad y también ayuda a que otros estudiantes no pasen por lo mismo."
+    ],
+    actions: [
+      "Habla con tu tutor, el área de Psicología o Convivencia Escolar y explica claramente que estás recibiendo burlas o exclusión por motivos de discriminación.",
+      "Cuéntaselo a tu familia para que respalden tu reclamo en el colegio; las escuelas están obligadas a intervenir y realizar acciones formativas y correctivas frente al racismo o cualquier discriminación.",
+      "No respondas con otros insultos; si te sientes seguro, puedes marcar un límite firme diciendo: «Mis raíces / mi persona merecen respeto y esos comentarios no son graciosos».",
+      "Acércate a compañeros y espacios del colegio donde valoren el respeto mutuo y evita aislarte.",
+      "Si la discriminación es repetida, pide a tus padres o tutor que se registre formalmente el caso en los canales de convivencia escolar."
+    ],
+    questions: [
+      "¿Estos comentarios o rechazos ocurren dentro del salón de clases o en los recreos?",
+      "¿Algún profesor ha escuchado cuando te dicen eso o todavía no lo saben en tutoría?",
+      "¿Te gustaría que pensemos cómo explicárselo a tu tutor o a tu familia?"
+    ]
+  },
 
-// Bancos de frases. Las multiplicaciones dan miles de combinaciones posibles:
-// bullying 8x8x8x10 = 5,120; soledad/apodos/amigos/general = 4,096 cada uno;
-// situaciones con docentes = 8x8x8 = 512 (pregunta final de seguridad fija).
-const bullyingBank = {
-  openings: [
-    "Gracias por confiarme lo que está pasando.",
-    "Siento que estés viviendo una situación así.",
-    "Te leo y quiero entender bien lo que ocurre.",
-    "Gracias por contarlo con tus propias palabras.",
-    "Debe ser agotador tener que lidiar con esto.",
-    "Lo que cuentas merece atención y apoyo.",
-    "No tienes que encontrar las palabras perfectas para explicarlo.",
-    "Podemos ordenar lo que está pasando paso a paso."
+  // 8.10 RUMORES, CHISMES Y DIFAMACIÓN
+  rumors_gossip: {
+    openings: [
+      "Entiendo lo frustrante y doloroso que es saber que están inventando rumores o mentiras sobre ti.",
+      "Gracias por contarme lo que pasa; sentir que hablan a tus espaldas o te culpan de algo injusto genera mucha impotencia.",
+      "Siento mucho que tus compañeros estén difundiendo chismes para dañarte o poner a otros en tu contra.",
+      "Te escucho. Los rumores buscan incomodarte y aislarte, pero podemos manejarlo con calma e inteligencia.",
+      "Es muy pesado llegar al salón y sentir miradas o comentarios por algo que inventaron sobre ti.",
+      "Haces bien en desahogarte aquí; la difamación y los rumores malintencionados son una forma de acoso escolar relacional."
+    ],
+    validations: [
+      "Que varias personas repitan una mentira o un rumor jamás lo convierte en verdad ni cambia la persona que realmente eres.",
+      "Tú no eres culpable de lo que otros inventan por malicia, envidia o por querer llamar la atención del grupo.",
+      "No necesitas darle explicaciones desesperadas a todo el colegio ni entrar en peleas públicas para defender tu dignidad.",
+      "Es normal que te dé rabia o tristeza que crean algo falso, pero quienes quedan mal al final son quienes inventan mentiras.",
+      "Tu privacidad y tu buen nombre merecen respeto dentro y fuera del aula.",
+      "No tienes que vengarte inventando otro rumor; actuar con madurez y apoyo adulto es lo que realmente frena la situación."
+    ],
+    actions: [
+      "Habla en privado con tu tutor o con el psicólogo del colegio y explícale qué rumor están difundiendo, quiénes lo empezaron y cómo está afectando la convivencia en el salón.",
+      "Con tus amigos cercanos o las personas que realmente te importan, aclara la verdad una sola vez con serenidad: «Eso que están diciendo no es cierto y me hace daño que lo repitan».",
+      "Si el rumor se está esparciendo por grupos de WhatsApp o redes sociales, toma captura y pide ayuda a tus padres y a Tutoría para que intervengan.",
+      "Evita confrontar a gritos al grupo que esparce el chisme, porque muchas veces buscan justamente provocar una reacción tuya para seguir molestando.",
+      "Apóyate en tu familia y en compañeros que te conocen bien para no quedarte solo mientras el tutor frena el problema en el aula."
+    ],
+    questions: [
+      "¿El rumor lo están comentando solo en el salón o también lo han escrito en grupos de chat?",
+      "¿Has podido conversar de esto con tu tutor o con algún amigo que sí te apoye?",
+      "¿Qué es lo que más te preocupa de lo que están diciendo?"
+    ]
+  },
+
+  // 8.11 EXCLUSIÓN SOCIAL Y AISLAMIENTO EN GRUPOS
+  social_exclusion: {
+    openings: [
+      "Siento mucho que te estén dejando de lado; que te excluyan de los grupos o nadie quiera trabajar contigo duele de verdad.",
+      "Gracias por confiarme cómo te tratan en tu salón. Sentirse ignorado o apartado por los compañeros es muy duro.",
+      "Te escucho y te comprendo: pasar el recreo sin compañía o quedar fuera de los trabajos grupales hace que el colegio se sienta pesado.",
+      "Lamento que estés viviendo esta exclusión en tu clase; no tienes por qué fingir que no te afecta.",
+      "Es totalmente comprensible que te sientas triste o incómodo cuando tus compañeros te apartan a propósito.",
+      "Qué bueno que lo cuentes aquí; la exclusión intencional y «la ley del hielo» también son formas de acoso social que deben atenderse."
+    ],
+    validations: [
+      "Que un grupo decida excluirte o no hacer equipo contigo no significa que tengas un defecto ni que valgas menos que ellos.",
+      "Mereces estar en un salón donde te incluyan con respeto en las actividades académicas y en la convivencia diaria.",
+      "No tienes que rogar la amistad ni cambiar tu forma de ser para agradarle a personas que tienen actitudes excluyentes.",
+      "A veces un grupo actúa por imitación o presión de un líder negativo; el problema está en la actitud de ellos, no en ti.",
+      "Es válido que te duela quedarte sin grupo en clase, y los profesores tienen la responsabilidad de organizar el aula para que nadie quede excluido.",
+      "Tu valor como persona y como estudiante está muy por encima de la actitud cerrada de algunos compañeros."
+    ],
+    actions: [
+      "Cuando los profesores pidan formar grupos y nadie te incluya, acércate en privado al docente o a tu tutor y pídele que sea él quien arme los equipos por sorteo o lista para evitar exclusiones.",
+      "Observa en tu salón o en otras secciones si hay compañeros tranquilos o amables que no formen parte del grupo que te excluye, y empieza acercándote a ellos con conversaciones sencillas.",
+      "Durante el recreo, puedes sumarte a talleres, biblioteca, deportes o clubes del colegio donde compartas gustos con estudiantes de otros salones.",
+      "Coméntale a tu tutor o al psicólogo escolar que te están aislando intencionalmente para que trabajen la integración del aula sin exponerte de forma incómoda.",
+      "Conversa también con tu familia sobre cómo te sientes en el salón para que te brinden respaldo emocional y hablen con el tutor si la exclusión continúa."
+    ],
+    questions: [
+      "¿Esto pasa sobre todo cuando toca hacer trabajos en grupo o también durante los recreos?",
+      "¿Es todo el salón o hay una persona en particular que les dice a los demás que no se junten contigo?",
+      "¿Hay algún compañero tranquilo en tu clase con quien sí hayas conversado bien alguna vez?"
+    ]
+  },
+
+  // 8.12 INSULTOS, APODOS OFENSIVOS Y HUMILLACIONES
+  nicknames_humiliation: {
+    openings: [
+      "Siento mucho que te estén poniendo apodos ofensivos o burlándose de ti; escuchar eso constantemente cansa y lastima.",
+      "Gracias por contarme lo que te dicen. Que se burlen de ti, y más aún delante de la clase, es una falta de respeto que no debes callar.",
+      "Te escucho con mucha empatía. Ningún apodo ni insulto tiene por qué ser tolerado como si fuera un chiste.",
+      "Comprendo que estés harto de esas burlas y sobrenombres; lo que estás viviendo merece parar.",
+      "Lamento que tus compañeros usen palabras hirientes o se rían para hacerte sentir mal en el salón.",
+      "Haces muy bien en hablarlo: humillar a alguien en público o ponerle apodos por su físico o forma de ser es acoso verbal."
+    ],
+    validations: [
+      "Quiero que recuerdes algo fundamental: ningún apodo ni insulto define quién eres, ni cuánto vales, ni tu inteligencia ni tu apariencia.",
+      "Una broma solo es broma cuando todos se divierten; desde el momento en que a ti te incomoda o te hiere, deja de ser un juego y se convierte en agresión.",
+      "Tu cuerpo, tu aspecto físico, tu voz o tu ritmo de aprendizaje no tienen absolutamente nada de malo y nadie tiene derecho a usarlos para burlarse.",
+      "No tienes obligación de reírte de los apodos para disimular o para que los demás no te digan que «no aguantas bromas».",
+      "Tienes todo el derecho de exigir que te llamen únicamente por tu nombre.",
+      "La culpa de una humillación nunca es de quien la recibe, sino de quien necesita rebajar a otro para llamar la atención."
+    ],
+    actions: [
+      "Si no corres riesgo físico, puedes poner un límite corto, serio y sin gritar: «Tengo nombre, no me llames así porque no me da risa», y luego retirarte sin entrar en discusión.",
+      "No respondas con otro apodo ni con insultos, porque eso hace que parezca una pelea mutua; en lugar de eso, informa de inmediato a tu tutor o profesor de aula.",
+      "Si se burlan de ti delante de toda la clase, pídele a tu tutor que intervenga aplicando las normas de convivencia del salón para frenar las burlas grupales.",
+      "Cuéntaselo a tus padres o a un adulto de confianza en casa explicando qué apodos usan, quiénes lo hacen y desde hace cuánto tiempo se repite.",
+      "Puedes pedir la intervención de tu docente diciendo: «Profesor, hay compañeros que todos los días me ponen apodos / me humillan en clase y necesito su ayuda para que se detenga»."
+    ],
+    questions: [
+      "¿Es una sola persona quien empieza con los apodos e insultos o es un grupo del salón?",
+      "¿Ocurre cuando el profesor está presente en el aula o aprovechan cuando no los ven?",
+      "¿Ya le comentaste a tu tutor o a tus padres cómo te están llamando?"
+    ]
+  },
+
+  // 8.13 BULLYING Y ACOSO ESCOLAR GENERAL
+  bullying_general: {
+    openings: [
+      "Siento mucho que estés pasando por esta situación de acoso y molestia constante en tu colegio.",
+      "Gracias por confiar en mí y contarlo con tus propias palabras; es agotador que alguien no deje de fastidiarte.",
+      "Te escucho con atención. Nadie tiene por qué ir a estudiar sintiendo que sus compañeros lo tratan mal o lo hostigan.",
+      "Comprendo perfectamente que estés cansado de ese trato; lo que describes merece atención y apoyo real.",
+      "Qué bueno que decidiste escribirlo hoy: el bullying no es algo que tengas que aguantar ni resolver en soledad.",
+      "Lamento que esa persona o grupo se esté metiendo contigo; vamos a ver pasos seguros para que esto cambie."
+    ],
+    validations: [
+      "Nada de lo que haces o eres justifica que otra persona decida molestarte o acosarte; la responsabilidad es de quien agrede, nunca tuya.",
+      "Aguantar en silencio no hace que el bullying desaparezca por sí solo; pedir ayuda a los adultos es un acto de valentía y cuidado propio.",
+      "Tus emociones son totalmente válidas: sentir rabia, cansancio, tristeza o miedo ante el acoso no es exagerar.",
+      "Mereces respeto y tranquilidad todos los días en tu salón, en el recreo y fuera del colegio.",
+      "Ningún estudiante tiene derecho a quitarte tu paz ni a hacerte sentir menos.",
+      "El acoso escolar se detiene cuando deja de ser un secreto y los adultos responsables intervienen."
+    ],
+    actions: [
+      "Habla hoy mismo con un adulto de confianza —tu mamá, papá, tutor, psicólogo escolar o encargado de Convivencia— y cuéntale quién te molesta, qué hace exactamente y con qué frecuencia ocurre.",
+      "Evita quedarte a solas en lugares apartados donde esa persona suela molestarte, y procura mantenerte cerca de compañeros que te traten bien o de docentes.",
+      "No intentes vengarte ni enfrentarte a golpes, ya que eso puede ponerte en riesgo; deja que las autoridades del colegio apliquen las medidas correctivas.",
+      "Anota en un cuaderno en casa qué días ha ocurrido y quiénes lo vieron, para que tu familia y tu tutor tengan datos claros al intervenir.",
+      "Si no sabes cómo empezar a contarlo a un adulto, puedes decirle: «Hay alguien en mi salón que no deja de molestarme, ya me siento muy cansado de esto y necesito tu ayuda para que intervengan en el colegio».",
+      "Recuerda que tu familia o tú pueden solicitar que el caso se atienda formalmente mediante el comité de tutoría y convivencia escolar de tu institución."
+    ],
+    questions: [
+      "¿Qué tipo de cosas hace esa persona para molestarte (burlas, quitarte cosas, empujones o mensajes)?",
+      "¿Desde hace cuánto tiempo viene ocurriendo esto y en qué momentos del día pasa más?",
+      "¿Hay algún adulto en tu casa o en el colegio con quien te sientas con confianza para hablar hoy?"
+    ]
+  },
+
+  // 8.14 SOLEDAD, BIENESTAR EMOCIONAL Y VERGÜENZA DE PEDIR AYUDA
+  loneliness_emotional: {
+    openings: [
+      "Gracias por abrir tu corazón y contarme cómo te sientes; aquí sí te escucho y sí me importa lo que estás pasando.",
+      "Siento mucho que te sientas tan solo en este momento; llevar esa tristeza o vacío por dentro pesa muchísimo.",
+      "Te leo con mucha calidez y sin juzgarte. No estás molestando para nada al expresar que necesitas ser escuchado.",
+      "Comprendo lo duro que es sentir que nadie te presta atención o que te da vergüenza pedir ayuda.",
+      "Qué valioso que hayas decidido escribir hoy en lugar de guardarte todo ese sentimiento en silencio.",
+      "A veces parece que a nadie le importamos cuando estamos tristes, pero tu vida y tus emociones tienen muchísimo valor."
+    ],
+    validations: [
+      "Sentirte solo hoy no significa que vayas a estar solo siempre ni que haya algo malo en ti.",
+      "Sentir vergüenza o miedo al pedir ayuda es muy común, pero necesitar apoyo humano no te hace débil ni una carga.",
+      "Todas las personas, incluso las más fuertes, necesitan en algún momento alguien que las escuche con cariño y respeto.",
+      "Lo que sientes importa de verdad, aunque todavía te cueste ordenarlo en palabras.",
+      "No tienes que fingir una sonrisa todo el tiempo cuando por dentro te sientes triste o inseguro.",
+      "Mereces amistades sinceras y adultos que te escuchen con paciencia y empatía."
+    ],
+    actions: [
+      "Si te da vergüenza hablar cara a cara con un adulto de confianza, una excelente opción es escribir lo que sientes en una carta o mensaje de texto y entregárselo a tu mamá, papá, familiar cercano o al psicólogo del colegio.",
+      "Piensa en una sola persona adulta que alguna vez haya sido amable y paciente contigo —un profesor, tutor, tía, abuelo u orientador— y acércate a pedirle unos minutos para conversar en privado.",
+      "Puedes romper el hielo con una frase muy sencilla: «Últimamente me siento muy solo / triste y me da un poco de vergüenza decirlo, pero necesito que alguien me escuche».",
+      "Para ir conociendo compañeros poco a poco sin presión, intenta participar en alguna actividad que te guste (arte, música, deporte, lectura o clubes escolares) donde el trato surge de forma natural.",
+      "No te exijas resolver todo hoy mismo: dar un primer paso pequeño, como hablar con el área de Psicología de tu colegio o llamar a una línea gratuita de orientación emocional, ya hace una gran diferencia."
+    ],
+    questions: [
+      "¿Hay algo en especial que haya ocurrido en el colegio o en casa que te haya hecho sentir así de solo?",
+      "¿Te resultaría más fácil escribirle una nota a un adulto de confianza en vez de decírselo en voz alta?",
+      "¿Qué te ayudaría a sentirte un poquito más tranquilo en este momento?"
+    ]
+  },
+
+  // 8.15 PROBLEMAS CON AMISTADES, CONFLICTOS ENTRE PARES Y PRESIÓN DE GRUPO
+  peer_conflict: {
+    openings: [
+      "Entiendo que estés preocupado; tener problemas o peleas con un amigo o compañero cercano siempre incomoda y duele.",
+      "Gracias por contarme lo que pasó con tus amistades; vamos a pensarlo con calma para que tomes la mejor decisión.",
+      "Te escucho. Los desacuerdos entre amigos o la presión de un grupo pueden ser confusos de manejar.",
+      "Siento que estés pasando por este mal momento con tu amigo o compañero.",
+      "Qué bueno que busques orientación antes de reaccionar con enojo; eso demuestra mucha madurez de tu parte.",
+      "Vamos a diferenciar qué parte es un malentendido que se puede conversar y dónde están tus límites personales."
+    ],
+    validations: [
+      "En cualquier amistad verdadera debe haber respeto mutuo: un desacuerdo nunca justifica que te insulten, te humillen ni te amenacen.",
+      "Si tus amigos te presionan para hacer algo que no quieres o que daña a otros, decir «no» es cuidar tu integridad: los verdaderos amigos respetan tus decisiones.",
+      "Es normal enojarse o tener malentendidos con un amigo, pero tú tienes derecho a expresar cómo te sentiste sin que te falten el respeto.",
+      "Escuchar la versión de la otra persona no significa que tengas que aceptar malos tratos ni pedir perdón por cosas que no hiciste.",
+      "Si una amistad te hace sentir mal constantemente, te manipula o te expone, tienes derecho a tomar distancia para cuidar tu bienestar."
+    ],
+    actions: [
+      "Espera a que ambos estén más tranquilos y pídele hablar en privado sin terceros alrededor, usando frases desde cómo te sientes tú: «Cuando pasó esto me sentí mal y me gustaría que lo aclaremos».",
+      "Evita ventilar la pelea en estados de redes sociales o grupos de WhatsApp, porque eso suele agrandar el conflicto e involucrar a más gente.",
+      "Si se trata de presión de grupo para hacer algo indebido, aléjate del lugar con una respuesta firme («No quiero meterme en eso») y busca compañeros que respeten tus límites.",
+      "Si intentas conversar de buena manera y la otra persona responde con agresividad, burlas o amenazas, no insistas a solas y pide la mediación de tu tutor o del psicólogo escolar.",
+      "Recuerda que una amistad sana suma tranquilidad a tu vida; si el conflicto se vuelve acoso constante, apóyate en un adulto de confianza."
+    ],
+    questions: [
+      "¿Sientes que fue un malentendido puntual entre amigos o esa persona suele tratarte mal con frecuencia?",
+      "¿Crees que puedas conversar a solas y con calma con tu amigo, o prefieres que un tutor los ayude a mediar?",
+      "¿Qué te gustaría que cambie en la relación con ese compañero?"
+    ]
+  },
+
+  // 8.16 CÓMO APOYAR A UN AMIGO / COMPAÑERO O ACTUAR COMO TESTIGO
+  helping_friend: {
+    openings: [
+      "Habla muy bien de ti que quieras ayudar y no quedarte indiferente ante lo que está sufriendo tu amigo o compañero.",
+      "Qué valioso que te preocupes por el bienestar de otra persona; para alguien que sufre acoso, contar con un amigo cambia todo.",
+      "Gracias por buscar una forma segura e inteligente de apoyar a tu amiga o amigo.",
+      "Te felicito por tu empatía: muchas veces quienes sufren bullying o violencia callan por miedo, y tu apoyo puede ser clave.",
+      "Es muy importante lo que quieres hacer; vamos a ver cómo puedes ayudarle de verdad sin ponerte en peligro tú.",
+      "Escuchar y acompañar a un compañero que la está pasando mal es una de las mejores formas de mejorar la convivencia escolar."
+    ],
+    validations: [
+      "Acercarte a decirle «Te creo, no estás solo y no es tu culpa» ya le brinda un alivio emocional enorme.",
+      "Recuerda algo muy importante: ser un buen amigo no significa que tengas que resolver tú solo un problema grave ni pelear contra los agresores.",
+      "Cuando la vida, la salud o la seguridad física de tu amigo están en riesgo, buscar ayuda de un adulto responsable no es traicionar su confianza: es proteger su vida.",
+      "Cuidar la privacidad de tu compañero es fundamental: nunca difundas lo que te contó ni reenvíes fotos o videos donde lo humillen.",
+      "Tú también mereces estar seguro mientras ayudas; apoyar desde la compañía y el aviso a adultos es mucho más efectivo que confrontar."
+    ],
+    actions: [
+      "Escúchale con paciencia sin juzgarle ni culparle, y acompáñale en los momentos difíciles como el recreo o la salida para que no se sienta aislado.",
+      "Anímale a contar lo que ocurre a un adulto de confianza (su familia, el tutor o el psicólogo del colegio) y ofrécele ir juntos: «Si te da miedo ir solo a hablar con la tutora, yo te acompaño ahora mismo».",
+      "Si ves que están difundiendo burlas o fotos contra tu compañero en redes, no te rías ni las compartas; repórtalas y avisa a un adulto.",
+      "Si tu amigo o amiga está sufriendo violencia física, abuso sexual, violencia familiar o tiene ideas de hacerse daño, avisa de inmediato a un docente de confianza, al psicólogo escolar o a tu propia familia para que lo protejan hoy mismo, incluso si te pidió guardar el secreto.",
+      "También puedes reportar casos de violencia escolar como testigo de manera confidencial en los canales oficiales para que el colegio intervenga sin exponerte."
+    ],
+    questions: [
+      "¿Sabes si tu amigo o amiga corre peligro físico inmediato en el colegio o en su casa?",
+      "¿Crees que aceptaría que lo acompañes hoy a conversar con el tutor o el psicólogo del colegio?",
+      "¿Quieres que preparemos una frase para decirle a tu amigo y animarlo a pedir ayuda adulta?"
+    ]
+  },
+
+  // 8.17 CÓMO PEDIR AYUDA A UN ADULTO DE CONFIANZA
+  how_to_ask_help: {
+    openings: [
+      "Pensar en cómo pedir ayuda a un adulto de confianza es el paso más importante y valiente que puedes dar.",
+      "Me alegra mucho ayudarte a preparar este paso; pedir apoyo a una persona adulta segura hace que dejes de cargar el problema a solas.",
+      "Es totalmente normal sentir nervios antes de hablar con un adulto, pero podemos hacerlo sencillo y paso a paso.",
+      "Vamos a organizar juntos cómo elegir a esa persona de confianza y qué decirle para que te escuche con atención.",
+      "Pedir ayuda no requiere un discurso largo ni perfecto; basta con elegir a alguien seguro y ser claro."
+    ],
+    validations: [
+      "Un adulto de confianza es alguien que te escucha con respeto, no te culpa por lo que te pasa y busca protegerte.",
+      "Puede ser tu mamá, tu papá, un hermano mayor, abuelos, tíos, o dentro del colegio tu tutor, un profesor amable, el psicólogo o el encargado de Convivencia Escolar.",
+      "Si alguna vez hablaste con un adulto y sentiste que no te prestó suficiente atención, no te rindas: busca a un segundo adulto seguro hasta que te escuchen.",
+      "No tienes que saber todas las soluciones antes de hablar; el trabajo del adulto es justamente ayudarte a encontrarlas."
+    ],
+    actions: [
+      "Elige un momento tranquilo y pide conversar en privado: «¿Tienes unos minutos? Necesito contarte algo importante que me está pasando y necesito tu apoyo».",
+      "Explica tres puntos básicos: qué está ocurriendo (burlas, amenazas, exclusión, golpes), quién o quiénes lo hacen y dónde sucede (en el salón, en el recreo, por redes o en casa).",
+      "Si te da mucha vergüenza o sientes que vas a llorar al hablar, escríbelo en una hoja o en un mensaje del celular y entrégaselo diciendo: «Me cuesta decirlo en voz alta, por favor lee esto y ayúdame».",
+      "Si además necesitas orientación profesional inmediata, recuerda que en Perú existen líneas gratuitas y confidenciales donde especialistas te escuchan y orientan."
+    ],
+    questions: [
+      "De las personas adultas que conoces en tu familia o en tu colegio, ¿con cuál sientes un poco más de confianza para empezar?",
+      "¿Prefieres hablarlo en persona o te gustaría que redactemos juntos un mensaje corto para mostrárselo?"
+    ]
+  },
+
+  // 8.18 INFORMACIÓN EDUCATIVA SOBRE BULLYING Y CIBERACOSO
+  educational_info: {
+    explanations: [
+      "Según organismos como UNICEF y el Ministerio de Educación (MINEDU), el bullying o acoso escolar es un comportamiento agresivo e intencional que se repite en el tiempo entre estudiantes y donde existe un desequilibrio de poder (por fuerza, grupo o intimidación). No es un simple desacuerdo puntual entre amigos, sino un trato que busca dañar, humillar o excluir.",
+      "El acoso escolar puede presentarse de varias formas: verbal (insultos, apodos ofensivos, burlas públicas), social o relacional (exclusión intencional de los grupos, «ley del hielo», rumores), físico (golpes, empujones, esconder o romper pertenencias), psicológico (amenazas, intimidación) y ciberacoso (cuando se usan redes sociales, WhatsApp, fotos sin permiso o cuentas falsas para agredir).",
+      "Para diferenciar una broma del bullying, recuerda esta regla clara: en una broma sana hay confianza y todos se divierten; cuando una sola parte se ríe, la otra persona se siente humillada o con miedo y la conducta se repite pese a incomodar, ya es acoso y requiere intervención."
+    ],
+    guidance: [
+      "Para detener el bullying no se recomienda enfrentar a golpes al agresor ni quedarse callado esperando que pase solo. Lo más efectivo y seguro es contarlo a un adulto de confianza (familia, tutor o psicólogo escolar), guardar pruebas si ocurre por internet y pedir que el colegio active sus protocolos de convivencia.",
+      "Si eres testigo de bullying hacia un compañero, no te rías ni compartas burlas: acompáñalo para que no esté solo y avisa a un docente o repórtalo de manera confidencial."
+    ],
+    questions: [
+      "¿Preguntas porque quieres informarte sobre el tema o porque tú o alguien que conoces está viviendo algo parecido?",
+      "¿Te gustaría saber cómo actuar ante algún caso específico en el colegio o en redes sociales?"
+    ]
+  },
+
+  // 8.19 ORIENTACIÓN GENERAL / ESCUCHA ABIERTA (RESPALDO EMPÁTICO)
+  general_orientation: {
+    openings: [
+      "Gracias por escribirle a Lumy. Estoy aquí para escucharte con respeto y orientarte paso a paso.",
+      "Te leo con calma. Este es un espacio seguro pensado para acompañarte y darte orientación práctica.",
+      "Gracias por compartir eso conmigo; no necesitas usar palabras complicadas para explicarme lo que sientes o necesitas.",
+      "Aquí estoy para apoyarte. Podemos conversar con tranquilidad sobre cualquier situación que te preocupe.",
+      "Me interesa entender bien lo que estás viviendo para darte una orientación clara y segura.",
+      "Cuenta conmigo para ordenar tus ideas con calma y sin ningún tipo de juicio."
+    ],
+    validations: [
+      "Cualquier situación que te quite tranquilidad en el colegio, en internet o en tu entorno merece ser escuchada con seriedad.",
+      "Recuerda que por tu privacidad no necesitas escribir apellidos, direcciones ni el nombre de tu colegio.",
+      "Pedir orientación cuando algo te incomoda o te genera dudas es una decisión muy valiosa.",
+      "No tienes que resolver un problema difícil todo de una sola vez; podemos ir viendo opciones seguras paso a paso.",
+      "Tu bienestar emocional y tu seguridad son siempre lo más importante.",
+      "Siempre hay formas seguras de pedir apoyo a personas adultas de confianza cuando algo te supera."
+    ],
+    actions: [
+      "Puedo orientarte sobre bullying, apodos o burlas, exclusión de grupos, amenazas, ciberacoso, problemas con amigos o docentes, situaciones difíciles en casa o cómo ayudar a un compañero.",
+      "Cuéntame con tus propias palabras qué ocurrió recientemente, dónde está pasando y cómo te está haciendo sentir.",
+      "Si prefieres ir directo a la práctica, dime si buscas un consejo para actuar tú, cómo hablar con un adulto de confianza o información sobre canales de ayuda."
+    ],
+    questions: [
+      "¿Me cuentas un poquito más sobre qué es lo que más te preocupa en este momento?",
+      "¿Esta situación te está pasando a ti directamente o buscas cómo apoyar a otra persona?",
+      "¿Ocurre en tu colegio, por redes sociales o en tu casa?"
+    ]
+  },
+
+  // 8.20 SALUDOS, AGRADECIMIENTOS Y DESPEDIDAS
+  greetings: [
+    "¡Hola! 💙 Soy Lumy, tu asistente de orientación escolar. Puedes contarme con tus propias palabras lo que te preocupa, sin necesidad de dar tus datos personales. ¿En qué te puedo apoyar hoy?",
+    "¡Hola! Qué bueno que estés aquí. Soy Lumy y estoy disponible para escucharte y orientarte sobre convivencia escolar, bullying, ciberacoso, amistades o cualquier situación que te haga sentir inseguro. ¿De qué te gustaría conversar?",
+    "¡Holi! 💙 Bienvenido a Lumy. Este es un espacio seguro y respetuoso para ti. Cuéntame con confianza: ¿te está pasando algo en el colegio, en redes o en casa, o buscas cómo ayudar a alguien?",
+    "¡Hola! Soy Lumy. Estoy aquí para escucharte con calma y darte consejos seguros y prácticos. No necesitas poner nombres completos ni el nombre de tu colegio. ¿Qué tienes en mente hoy?",
+    "¡Buenas! 💙 Soy Lumy. Si estás pasando por un momento difícil, tienes dudas sobre el acoso escolar o necesitas saber cómo pedir ayuda a un adulto de confianza, cuéntame y lo vemos paso a paso.",
+    "¡Hola! Gracias por escribir a Lumy. Puedes desahogarte o hacerme cualquier consulta con tranquilidad. ¿Cómo te sientes hoy?"
   ],
-  validation: [
-    "Mereces que te traten con respeto, también en el colegio y por internet.",
-    "No es tu culpa que otra persona decida tratarte mal.",
-    "No tienes que aguantarlo para demostrar que eres fuerte.",
-    "Que te afecte no significa que estés exagerando.",
-    "Tus sentimientos importan y vale la pena escucharlos.",
-    "Nadie tiene derecho a humillarte o intimidarte.",
-    "Pedir apoyo es una decisión válida; no tienes que resolverlo en solitario.",
-    "No tienes que aceptar ese comportamiento como si fuera normal."
+  gratitude: [
+    "No tienes nada que agradecer. 💙 Me alegra mucho haberte escuchado y acompañado hoy en Lumy. Recuerda que vales muchísimo, que mereces respeto y que apoyarte en un adulto de confianza en la vida real siempre será tu mejor respaldo.",
+    "Con mucho gusto, para eso está Lumy. 💙 Qué bueno que te hayas animado a expresar lo que sientes. No olvides que no tienes que llevar ninguna carga a solas y que puedes volver a escribir cuando lo necesites.",
+    "Gracias a ti por la confianza de contarlo. 💙 Cuida mucho tu bienestar, pon en práctica los pasos seguros que conversamos y acércate a una persona adulta protectora. ¡Mucho ánimo!",
+    "Me alegra saber que te sirvió conversar aquí en Lumy. 💙 Recuerda siempre que tu seguridad y tu tranquilidad van primero, y que pedir ayuda a tiempo es una señal de gran fortaleza.",
+    "De nada. 💙 Fue muy valioso conversar contigo. Si en algún momento vuelve a surgir una duda o necesitas repasar cómo hablar con un adulto de confianza, aquí estaré para orientarte.",
+    "Gracias a ti por darte este espacio para hablar. 💙 Mereces estudiar y vivir tranquilo y respetado; apóyate en tu familia, tutores o en las líneas oficiales siempre que lo necesites."
   ],
-  nextSteps: [
-    "Puedes contarle a un adulto de confianza qué ocurrió, cuándo pasa y cómo te afecta.",
-    "Si puedes, anota cuándo ocurre y quién estaba presente para explicarlo con claridad a una persona adulta.",
-    "Busca a alguien que pueda acompañarte: un familiar, tutor u orientador escolar con quien te sientas seguro.",
-    "Evita enfrentarte a esa persona a solas; pide que un adulto te ayude a manejar la situación.",
-    "Si vuelve a ocurrir, intenta acercarte a un lugar con otras personas y avisa a un adulto de confianza.",
-    "Puedes empezar la conversación diciendo: «Hay algo que me está pasando y necesito que me escuches».",
-    "No necesitas reunir pruebas por tu cuenta ni exponerte para demostrar lo ocurrido; prioriza estar seguro.",
-    "Si sucede en línea, conserva los mensajes solo si hacerlo es seguro y pide ayuda para reportar o bloquear la cuenta."
-  ],
-  questions: [
-    "¿Qué suele pasar justo antes de que empiece?",
-    "¿Te ocurre en persona, en internet o en ambos lugares?",
-    "¿Es algo que ha pasado una vez o viene repitiéndose?",
-    "¿Qué es lo que más te preocupa de esta situación ahora mismo?",
-    "¿Hay alguien adulto con quien te sentirías seguro hablando hoy?",
-    "¿Ocurre delante de otras personas o cuando están a solas?",
-    "¿Quieres contarme qué pasó la última vez, sin compartir nombres completos ni datos del colegio?",
-    "¿Qué tipo de apoyo te ayudaría más en este momento?",
-    "¿Te sientes a salvo ahora mismo?",
-    "¿Prefieres que pensemos en cómo contárselo a un adulto de confianza?"
+  farewells: [
+    "Cuídate mucho. 💙 Recuerda que en Lumy siempre tendrás un espacio seguro para orientarte, y que ante cualquier peligro debes acudir de inmediato a un adulto de confianza. ¡Hasta pronto!",
+    "¡Hasta luego! 💙 Espero que todo mejore pronto. No olvides apoyarte en las personas adultas que te quieren y te cuidan.",
+    "Nos vemos pronto. 💙 Recuerda que no estás solo y que tu bienestar importa muchísimo. ¡Mucho ánimo!"
   ]
 };
 
-const nicknameBank = {
-  openings: [
-    "Gracias por contarme que te ponen ese apodo.",
-    "Siento que estén usando un apodo para molestarte.",
-    "Entiendo que escuchar ese sobrenombre una y otra vez puede doler.",
-    "Quiero que sepas algo: un apodo no define quién eres.",
-    "Gracias por confiarme algo que puede ser difícil de explicar.",
-    "No mereces que utilicen palabras para hacerte sentir menos.",
-    "Podemos hablar de lo que ocurre sin repetir aquí el insulto.",
-    "Tiene sentido que te incomode que te llamen de una forma que no elegiste."
-  ],
-  validation: [
-    "Tu valor no depende de lo que esa persona diga.",
-    "Tu aspecto, tu cuerpo, tu forma de aprender o cualquier característica tuya no justifican las burlas.",
-    "Que otras personas repitan un apodo no lo convierte en verdad.",
-    "No tienes que reírte del apodo para que los demás estén cómodos.",
-    "Tienes derecho a pedir que dejen de llamarte así.",
-    "No es culpa tuya que alguien use palabras para humillarte.",
-    "Un sobrenombre deja de ser una broma cuando te hiere o no respeta tus límites.",
-    "Mereces que te llamen por el nombre o la forma en que tú prefieres."
-  ],
-  nextSteps: [
-    "Puedes decir, si te sientes seguro: «No me gusta que me llames así; deja de hacerlo» y después buscar apoyo adulto.",
-    "Cuéntale a un docente de confianza, familiar u orientador qué apodo usan y en qué momentos ocurre.",
-    "Si sucede delante de otras personas, intenta no quedarte solo con el problema: pide a alguien seguro que te acompañe a hablarlo.",
-    "Si se repite, anota cuándo ocurre y quién estaba presente para explicárselo a una persona adulta.",
-    "No tienes obligación de responder con otro insulto ni de demostrar que no te afecta.",
-    "Si ocurre por mensajes, guarda el contenido solo si es seguro y pide a un adulto que te ayude a reportarlo.",
-    "Puedes pedir apoyo diciendo: «Me llaman con un apodo que me hace sentir mal y necesito que intervengas».",
-    "Si el apodo se refiere a tu cuerpo o apariencia, recuerda que no hay nada que tengas que cambiar para merecer respeto."
-  ],
-  questions: [
-    "¿Te lo dice una sola persona o varias?",
-    "¿Lo hacen delante de otras personas para que se rían?",
-    "¿Ya les has pedido que dejen de hacerlo?",
-    "¿Pasa en el colegio, por mensajes o en otro lugar?",
-    "¿Desde hace cuánto tiempo ocurre?",
-    "¿Hay algún adulto que sepa lo que está pasando?",
-    "¿Qué sientes cuando te llaman de esa manera?",
-    "¿Quieres que preparemos una frase para explicárselo a un docente o familiar?"
-  ]
-};
+// -----------------------------------------------------------------------------
+// 9. COMPOSICIÓN MODULAR COHERENTE Y CONTEXTUAL
+// -----------------------------------------------------------------------------
+function buildContextualBridge(ctx, intent) {
+  const parts = [];
 
-const teacherBank = {
-  openings: [
-    "Gracias por contármelo. Es importante que te escuchen.",
-    "Siento que estés viviendo algo así con una persona que tiene autoridad en el colegio.",
-    "Lo que describes merece atención y no tienes que manejarlo a solas.",
-    "Gracias por confiarme una situación tan delicada.",
-    "Quiero tomar en serio lo que estás diciendo.",
-    "No tienes que demostrar que puedes soportarlo ni resolverlo por tu cuenta.",
-    "Me importa que tengas apoyo y que puedas estar seguro en el entorno escolar.",
-    "Lamento que una persona adulta del colegio te esté haciendo sentir así."
-  ],
-  validation: [
-    "No es tu culpa y mereces que los adultos te traten con respeto.",
-    "Que sea docente o tenga autoridad no significa que pueda intimidarte o cruzar tus límites.",
-    "Tienes derecho a sentirte seguro y respetado en el colegio.",
-    "No tienes que guardar el secreto ni proteger a la persona adulta implicada.",
-    "Es válido que te sientas confundido, preocupado o incómodo.",
-    "Tu relato merece ser escuchado por otro adulto que pueda protegerte.",
-    "No es necesario que decidas por tu cuenta qué etiqueta ponerle a lo ocurrido para pedir ayuda.",
-    "Pedir ayuda por el comportamiento de un adulto no es portarse mal ni meterse en problemas."
-  ],
-  nextSteps: [
-    "Cuéntaselo cuanto antes a un adulto de confianza que no esté implicado, como un familiar o tutor seguro.",
-    "También puedes acudir a un orientador, responsable de protección o directivo de confianza distinto de la persona señalada.",
-    "Evita quedarte a solas con esa persona para hablar del tema; pide que otro adulto te acompañe.",
-    "Si existen mensajes, guárdalos solo si es seguro y muéstralos a un adulto de confianza.",
-    "No tienes que investigar ni enfrentarte a esa persona. Un adulto seguro debe ayudarte a dar los siguientes pasos.",
-    "Puedes mostrarle a un familiar este mensaje si te resulta difícil explicar lo que ocurre.",
-    "Si el primer adulto no te escucha, busca a otro adulto seguro fuera de esa situación y vuelve a pedir ayuda.",
-    "Si ahora te sientes en peligro, ve hacia un lugar acompañado y pide ayuda inmediata."
-  ],
-  questions: [
-    "¿Estás a salvo ahora mismo?",
-    "¿Hay un familiar u otro adulto de confianza a quien puedas contárselo hoy?",
-    "¿Lo que ocurre pasa durante las clases, por mensajes o en otro momento?",
-    "¿Hay otro docente u orientador con quien te sientas seguro?",
-    "¿Te preocupa tener que volver a estar a solas con esa persona?",
-    "¿Quieres que te ayude a escribir un mensaje para pedir apoyo a un familiar?",
-    "No hace falta que me cuentes detalles íntimos ni compartas nombres completos: ¿puedes buscar a un adulto seguro ahora?",
-    "¿Hay alguien que pueda acompañarte mientras cuentas lo que ha pasado?"
-  ]
-};
-
-const lonelyBank = {
-  openings: [
-    "Gracias por decirme cómo te sientes.",
-    "Debe ser duro sentir que no tienes con quién hablar.",
-    "No tienes que ordenar todo lo que sientes antes de pedir compañía.",
-    "Me alegra que hayas podido ponerlo en palabras aquí.",
-    "Quiero escucharte sin juzgarte.",
-    "Sentirse sin apoyo puede pesar mucho; no tienes que fingir que todo está bien.",
-    "Podemos ir despacio, una cosa a la vez.",
-    "No estás molestando por necesitar que alguien te escuche."
-  ],
-  validation: [
-    "Mereces tener personas que te escuchen con respeto.",
-    "No tienes que pasar por un momento difícil sin apoyo.",
-    "No es necesario que seas amigo íntimo de alguien para pedirle que te escuche.",
-    "Pedir compañía no te hace débil ni una carga.",
-    "Lo que sientes importa, incluso si todavía no sabes cómo explicarlo.",
-    "A veces cuesta encontrar a la primera persona adecuada; eso no significa que no exista ayuda.",
-    "No tienes que contarlo todo de golpe.",
-    "Un primer paso pequeño también cuenta."
-  ],
-  nextSteps: [
-    "Piensa en un familiar, docente, orientador escolar, entrenador o adulto de confianza con quien te sientas algo más seguro.",
-    "Puedes empezar con un mensaje sencillo: «¿Tienes un momento? Necesito hablar y que me escuches».",
-    "Si hablar cara a cara cuesta, escribir lo que te pasa y enseñárselo a una persona adulta puede ser más fácil.",
-    "También puedes acercarte a un orientador o psicólogo escolar y pedir una conversación privada.",
-    "Si la primera persona no puede ayudarte, intenta con otra persona adulta segura.",
-    "No necesitas compartir aquí datos personales; podemos pensar juntos qué tipo de persona podría escucharte.",
-    "Si estás pasando por algo que te hace sentir inseguro, busca a un adulto ahora y no te quedes solo con ello.",
-    "Podrías elegir a alguien que haya sido paciente contigo antes, aunque no hablen todos los días."
-  ],
-  questions: [
-    "¿Hay alguien, aunque no sea muy cercano, con quien te hayas sentido escuchado alguna vez?",
-    "¿Te resultaría más fácil hablar con un familiar, un docente o un orientador?",
-    "¿Lo que necesitas ahora es desahogarte, pedir consejo o buscar ayuda para algo que está pasando?",
-    "¿Quieres contarme qué te hizo sentir que no tienes a nadie?",
-    "¿Hay una persona adulta segura a la que puedas acercarte hoy?",
-    "¿Prefieres que pensemos en un mensaje corto para empezar la conversación?",
-    "¿Te sientes a salvo en este momento?",
-    "¿Qué te gustaría que una persona te dijera o hiciera para sentirte acompañado?"
-  ]
-};
-
-const friendBank = {
-  openings: [
-    "Es importante que quieras estar presente para tu amigo o amiga.",
-    "Qué bueno que estés buscando una forma de apoyar sin empeorar la situación.",
-    "Gracias por preocuparte por lo que está viviendo tu compañero o compañera.",
-    "A veces, escuchar con calma ya es una ayuda importante.",
-    "Tu intención de acompañar puede marcar una diferencia.",
-    "Podemos pensar en un apoyo que sea seguro para ambos.",
-    "No tienes que convertirte en quien resuelva todo el problema.",
-    "Lo mejor es que tu amigo o amiga no tenga que afrontar esto en soledad."
-  ],
-  validation: [
-    "Escúchale y toma en serio lo que te cuenta, sin presionarle para contar más de lo que desea.",
-    "Recuérdale que no merece que lo traten mal.",
-    "Evita culparle o preguntarle por qué no respondió de otra manera.",
-    "No prometas guardar en secreto una situación en la que alguien pueda estar en peligro.",
-    "No difundas capturas ni detalles; protege su privacidad.",
-    "No te enfrentes a quien le molesta ni te pongas en riesgo.",
-    "Puedes preguntarle qué tipo de apoyo necesita en vez de decidir por él o ella.",
-    "Es mejor acompañarle a pedir ayuda que intentar investigar por tu cuenta."
-  ],
-  nextSteps: [
-    "Anímale a hablar con un adulto de confianza y ofrécele acompañarle.",
-    "Si ocurre en el colegio, pueden buscar a un tutor u orientador que sea seguro para ambos.",
-    "Si hay mensajes de acoso, ayúdale a mostrarlos a un adulto sin reenviarlos a otras personas.",
-    "Si hay peligro inmediato, avisa a una persona adulta enseguida, aunque tu amigo te haya pedido secreto.",
-    "Puedes decirle: «Te creo, no es tu culpa y puedo acompañarte a buscar ayuda».",
-    "Pregúntale si quiere estar acompañado durante el recreo o al hablar con un docente.",
-    "Si la primera persona adulta no escucha, ayúdale a encontrar otra persona segura.",
-    "Respeta su ritmo, pero no cargues tú solo con una situación que necesita apoyo adulto."
-  ],
-  questions: [
-    "¿Tu amigo o amiga está a salvo ahora mismo?",
-    "¿Él o ella sabe que quieres apoyarle?",
-    "¿Hay algún adulto de confianza que pueda intervenir?",
-    "¿Quieres que preparemos una frase para ofrecerle ayuda sin presionarle?",
-    "¿Está ocurriendo en persona, en internet o en ambos?",
-    "¿Te preocupa que pueda estar en peligro ahora?",
-    "¿Tu amigo o amiga te ha pedido que le acompañes a contarlo?",
-    "¿Qué es lo que más necesita en este momento: compañía, que le escuchen o ayuda de un adulto?"
-  ]
-};
-
-const generalBank = {
-  openings: [
-    "Gracias por escribir a Lumy.",
-    "Estoy aquí para orientarte con información y pasos seguros.",
-    "Podemos explorar el tema con calma.",
-    "Gracias por acercarte a Contigo.",
-    "Cuéntame un poco más y trataré de orientarte.",
-    "No hace falta que uses palabras especiales para explicarlo.",
-    "Podemos empezar por lo que te resulte más fácil contar.",
-    "Quiero asegurarme de entender lo que necesitas."
-  ],
-  validation: [
-    "Tu pregunta merece una respuesta clara y respetuosa.",
-    "No tienes que compartir información que te identifique.",
-    "Es válido pedir orientación cuando algo te preocupa.",
-    "Podemos centrarnos en opciones que no te pongan en riesgo.",
-    "Si esto te está pasando, también puede ayudarte hablar con una persona adulta segura.",
-    "Pedir apoyo a tiempo puede evitar que tengas que manejarlo en solitario.",
-    "No tienes que resolver una situación difícil de una sola vez.",
-    "Podemos dividirlo en pasos pequeños."
-  ],
-  nextSteps: [
-    "Puedes contarme qué ocurrió, qué te preocupa y qué te gustaría que cambiara.",
-    "Si se relaciona con el colegio, un familiar o un orientador de confianza puede ayudarte a pensar los siguientes pasos.",
-    "Si alguien está en peligro, busca inmediatamente a un adulto de confianza.",
-    "No compartas apellidos, direcciones, el nombre de tu colegio ni datos privados aquí.",
-    "Puedes explicar la situación con tus propias palabras, incluso si está desordenada.",
-    "Si prefieres, podemos preparar una forma sencilla de pedir ayuda.",
-    "Cuéntame si buscas información, apoyo para ti o ideas para ayudar a otra persona.",
-    "Puedo orientarte sobre bullying, ciberacoso, convivencia escolar y cómo pedir apoyo."
-  ],
-  questions: [
-    "¿Qué es lo principal que te gustaría resolver?",
-    "¿Puedes contarme un ejemplo de lo que ocurrió?",
-    "¿Esto te está pasando a ti o quieres ayudar a otra persona?",
-    "¿Qué te gustaría que sucediera después?",
-    "¿Hay algo que te haga sentir inseguro ahora?",
-    "¿Quieres información o prefieres pensar en un siguiente paso?",
-    "¿En qué parte te gustaría que nos enfoquemos?",
-    "¿Qué es lo que más te preocupa de todo esto?"
-  ]
-};
-
-const teacherKeywordsForSafety = ["me toca", "me toca sin permiso", "me pide fotos", "me pide fotos intimas", "me pide que no cuente", "secreto entre nosotros", "me escribe cosas sexuales", "me quiere ver a solas", "me besa sin permiso", "me hace comentarios sexuales", "me pide que envie fotos"];
-
-function isLoneliness(text) {
-  return includesAny(text, [
-    "no tengo con quien hablar", "no tengo con quien hablarme", "no tengo a nadie con quien hablar",
-    "no hay nadie que me escuche", "nadie me escucha", "no tengo amigos", "no tengo amigas",
-    "me siento solo", "me siento sola", "estoy solo", "estoy sola", "no puedo hablar con nadie",
-    "no se a quien contarle", "no tengo a quien contarle", "no hay nadie para mi"
-  ]);
-}
-
-function isFriendSupport(text) {
-  return includesAny(text, ["mi amigo", "mi amiga", "ayudar a un amigo", "ayudar a una amiga", "un compañero", "una compañera", "mi mejor amigo", "mi mejor amiga"]) &&
-    includesAny(text, ["bullying", "acoso", "molest", "insult", "burl", "exclu", "ayudar", "que hago", "que puedo hacer", "esta triste", "tiene miedo", "le pegan"]);
-}
-
-function hasBullyingContext(text) {
-  return classifyBehavior(text) !== "unknown" || includesAny(text, ["bullying", "acoso escolar", "me humilla", "me hostiga", "me intimida"]);
-}
-
-function buildBullyingReply(seed, name, behavior) {
-  let reply = compose(seed, bullyingBank, "bullying");
-  if (name) reply = `Sobre ${name}, quiero que sepas esto: ${reply}`;
-
-  if (behavior === "physical") {
-    return `${pick(["Si hay empujones o agresiones físicas, no intentes enfrentarte a esa persona.", "Cuando hay agresiones físicas, lo primero es mantenerte acompañado y pedir ayuda.", "Si alguien te golpea o empuja, no tienes que resolverlo a solas."], seed, "physical-a")} ${pick(["Busca cuanto antes a un adulto de confianza y cuéntale lo ocurrido.", "Aléjate hacia un lugar con otras personas si puedes hacerlo sin aumentar el riesgo, y avisa a un adulto.", "Pide que una persona adulta segura te acompañe y ayude a tomar medidas."], seed, "physical-b")} ${pick(["¿Estás a salvo ahora?", "¿Hay un adulto cerca a quien puedas acudir?", "¿Ha ocurrido recientemente o está pasando en este momento?"], seed, "physical-q")}`;
-  }
-
-  if (behavior === "online") {
-    return `${pick(["El acoso por mensajes o redes también merece atención.", "Que ocurra detrás de una pantalla no hace que sea menos importante.", "Los mensajes que te humillan o intimidan no son algo que tengas que aceptar."], seed, "online-a")} ${pick(["Si es seguro, conserva el contenido y enséñaselo a un adulto de confianza; no lo difundas ni respondas con insultos.", "Pide ayuda a un adulto para bloquear o reportar la cuenta y conservar los mensajes importantes.", "No compartas más información personal y busca apoyo adulto para reportar lo ocurrido."], seed, "online-b")} ${pick(["¿Ocurre en un grupo, por mensajes privados o en una publicación?", "¿Hay alguien adulto que pueda ayudarte a revisar y reportar esos mensajes?", "¿Te han amenazado o publicado información privada?"], seed, "online-q")}`;
-  }
-
-  if (behavior === "threat") {
-    return `${pick(["Las amenazas deben tomarse en serio.", "No tienes que esperar a que una amenaza se convierta en una agresión para pedir ayuda.", "Es importante que no cargues con esa preocupación a solas."], seed, "threat-a")} ${pick(["No te reúnas a solas con esa persona; cuéntaselo a un adulto de confianza cuanto antes.", "Busca compañía y explica a un adulto qué se dijo, cuándo y si hay mensajes que lo documenten.", "Pide que un adulto seguro te acompañe y ayude a decidir qué hacer."], seed, "threat-b")} ${pick(["¿Te sientes en peligro ahora mismo?", "¿La amenaza fue por mensaje o en persona?", "¿Hay una persona adulta que pueda ayudarte hoy?"], seed, "threat-q")}`;
-  }
-
-  return reply;
-}
-
-function urgentObjectAssaultReply(text) {
-  const assaultSignals = [
-    "me metieron una escoba en el culo",
-    "me metieron una escoba en el culo ayuda we",
-    "me metieron una escoba",
-    "metieron una escoba",
-    "me introdujeron una escoba",
-    "me metieron un objeto",
-    "me introdujeron un objeto",
-    "me metieron algo por el ano",
-    "me penetraron por la fuerza",
-    "me violaron",
-    "sufri una agresion sexual",
-    "sufri abuso sexual",
-    "me obligaron a tener contacto sexual",
-    "me hicieron algo sexual sin mi consentimiento",
-    "me tocaron sin mi consentimiento"
-  ];
-
-  if (!includesAny(text, assaultSignals)) return null;
-
-  return "Quiero que sepas que lo que describes es muy grave y no es tu culpa. Si esto te ocurrió a ti, busca ahora mismo a un adulto de confianza que pueda acompañarte y solicita atención médica urgente, aunque no notes lesiones. Si hay algún objeto que todavía no ha sido retirado, no intentes retirarlo ni manipularlo por tu cuenta: deja que te atienda personal sanitario. Aléjate de la persona que te hizo daño si puedes hacerlo de forma segura. Si estás en peligro inmediato, pide ayuda a los servicios de emergencia. No necesitas contarme detalles íntimos para merecer ayuda.";
-}
-
-const expandedBanks = {
-
-  nickname: {
-    openings: [
-      "Gracias por contarme lo que te están diciendo.",
-      "Entiendo que ese apodo te esté afectando.",
-      "Quiero que sepas que mereces respeto.",
-      "Siento que tengas que escuchar esas palabras.",
-      "Podemos hablar de esto sin repetir el insulto.",
-      "No tienes que fingir que te hace gracia.",
-      "Lo que cuentas merece ser tomado en serio.",
-      "Gracias por confiarme una situación que puede ser incómoda."
-    ],
-    validation: [
-      "Un apodo no define tu identidad ni tu valor.",
-      "No es culpa tuya que alguien decida burlarse.",
-      "Tu apariencia no justifica que te humillen.",
-      "Tienes derecho a pedir que dejen de llamarte así.",
-      "Una broma deja de serlo cuando te lastima.",
-      "No tienes que responder con otro insulto.",
-      "Mereces que utilicen el nombre que tú prefieres.",
-      "No tienes que cambiar quién eres para recibir respeto."
-    ],
-    nextSteps: [
-      "Puedes explicar a un adulto de confianza qué apodo utilizan y cuándo sucede.",
-      "Si te sientes seguro, puedes decir que no aceptas ese sobrenombre.",
-      "Pide a un docente u orientador que intervenga si continúa.",
-      "Si sucede en línea, conserva los mensajes solo si es seguro y pide ayuda para reportarlos.",
-      "Busca la compañía de alguien que te trate con respeto.",
-      "Puedes escribir lo sucedido para explicarlo con mayor tranquilidad.",
-      "No te enfrentes a varias personas por tu cuenta.",
-      "Pide que un adulto te acompañe si necesitas hablar con quienes lo hacen."
-    ],
-    questions: [
-      "¿Quién suele utilizar ese apodo?",
-      "¿Te ocurre delante de otras personas?",
-      "¿Desde hace cuánto tiempo pasa?",
-      "¿Ya le has contado esto a alguien de confianza?",
-      "¿El apodo se repite incluso después de pedir que paren?",
-      "¿Sucede en el colegio o también en internet?",
-      "¿Qué es lo que más te duele de esa situación?",
-      "¿Quieres que preparemos una manera de pedir que se detenga?"
-    ]
-  },
-
-  loneliness: {
-    openings: [
-      "Gracias por contarme cómo te sientes.",
-      "Debe ser difícil sentir que no tienes compañía.",
-      "Te leo y quiero entender lo que estás viviendo.",
-      "No tienes que ocultar que necesitas hablar con alguien.",
-      "Podemos ir despacio, sin presión.",
-      "Es importante que hayas podido expresar esto.",
-      "No estás molestando por necesitar que te escuchen.",
-      "A veces encontrar apoyo cuesta, pero mereces tenerlo."
-    ],
-    validation: [
-      "Sentirte solo no significa que no seas importante.",
-      "Mereces amistades donde puedas ser tú mismo.",
-      "No tienes que agradarle a todo el mundo.",
-      "Pedir compañía no te hace una carga.",
-      "No necesitas tener muchos amigos para merecer apoyo.",
-      "Es válido que quieras sentirte incluido.",
-      "No tienes que solucionar todos tus sentimientos hoy.",
-      "Tu necesidad de ser escuchado es importante."
-    ],
-    nextSteps: [
-      "Podrías acercarte a un familiar o docente con quien te sientas cómodo.",
-      "Intenta comenzar con una conversación pequeña con alguien amable.",
-      "Puedes pedirle a un orientador escolar un espacio para conversar.",
-      "Escribe lo que sientes y compártelo con una persona adulta segura.",
-      "Busca una actividad escolar donde puedas conocer personas con intereses similares.",
-      "No te obligues a confiar rápidamente; puedes ir conociendo a las personas poco a poco.",
-      "Piensa en alguien que alguna vez te haya escuchado sin juzgarte.",
-      "Si alguien te excluye intencionalmente, también puedes pedir apoyo a un adulto."
-    ],
-    questions: [
-      "¿Te sientes así desde hace mucho tiempo?",
-      "¿Hay alguien con quien te gustaría recuperar la comunicación?",
-      "¿Te sientes solo en el colegio o también fuera de él?",
-      "¿Qué te gustaría que cambiara en tus amistades?",
-      "¿Hay algún adulto con quien puedas conversar hoy?",
-      "¿Te cuesta acercarte a otras personas o sientes que te rechazan?",
-      "¿Qué actividad disfrutas y podrías compartir con alguien?",
-      "¿Quieres contarme qué ocurrió para que te sintieras así?"
-    ]
-  },
-
-  rumors: {
-    openings: [
-      "Gracias por contarme lo que está sucediendo.",
-      "Los rumores pueden generar mucha preocupación.",
-      "Entiendo que te afecte que otras personas hablen de ti.",
-      "Quiero ayudarte a pensar en una manera segura de manejarlo.",
-      "No tienes que enfrentar todos esos comentarios por tu cuenta.",
-      "Es difícil sentirse observado o juzgado por otros.",
-      "Lo que estás viviendo merece atención.",
-      "Podemos distinguir qué está ocurriendo y qué puedes hacer."
-    ],
-    validation: [
-      "Un rumor no demuestra que algo sea verdad.",
-      "No eres responsable de los comentarios que otras personas inventan.",
-      "Tu privacidad y dignidad merecen respeto.",
-      "No tienes que justificar cada aspecto de tu vida ante los demás.",
-      "Difundir información privada para humillar puede causar mucho daño.",
-      "No tienes que entrar en discusiones públicas para defenderte.",
-      "Mereces que te escuchen antes de sacar conclusiones.",
-      "No es necesario devolver el daño para protegerte."
-    ],
-    nextSteps: [
-      "Cuéntale a un adulto de confianza qué se está difundiendo y cómo te afecta.",
-      "Evita reenviar los rumores o compartirlos con más personas.",
-      "Si aparecen en redes, pide ayuda para reportar las publicaciones.",
-      "Conserva información relevante solo si hacerlo es seguro.",
-      "Puedes pedir a un docente que te ayude a detener la difusión en el colegio.",
-      "Habla con alguien que pueda escuchar tu versión sin juzgarte.",
-      "No publiques datos privados para intentar demostrar algo.",
-      "Pide apoyo si los rumores incluyen amenazas o información íntima."
-    ],
-    questions: [
-      "¿Los comentarios se están difundiendo en el colegio o por internet?",
-      "¿Sabes si comenzó con una persona o con varias?",
-      "¿Se está compartiendo información privada?",
-      "¿Hay amenazas relacionadas con esos rumores?",
-      "¿Algún adulto de confianza conoce la situación?",
-      "¿Qué es lo que más te preocupa que otras personas crean?",
-      "¿Quieres pensar en cómo hablar con tu tutor?",
-      "¿Te sientes seguro en el lugar donde está ocurriendo?"
-    ]
-  },
-
-  digital: {
-    openings: [
-      "Gracias por explicarme lo que ocurre en internet.",
-      "Lo que sucede en redes también puede afectar mucho.",
-      "Quiero ayudarte a encontrar una forma segura de actuar.",
-      "No tienes que soportar mensajes que te intimiden.",
-      "Es importante que podamos tomar en serio el ciberacoso.",
-      "Gracias por confiarme esta situación.",
-      "Que ocurra detrás de una pantalla no lo hace menos importante.",
-      "Vamos a pensar en los siguientes pasos."
-    ],
-    validation: [
-      "Nadie tiene derecho a amenazarte por mensajes.",
-      "No tienes que responder con insultos.",
-      "Tu privacidad debe ser respetada.",
-      "No eres culpable de recibir mensajes abusivos.",
-      "No tienes que aceptar solicitudes que te hagan sentir inseguro.",
-      "Mereces usar internet sin intimidación.",
-      "Puedes pedir ayuda aunque el mensaje ya haya sido eliminado.",
-      "No tienes que solucionar el problema enfrentando a la cuenta."
-    ],
-    nextSteps: [
-      "Pide a un adulto de confianza que te ayude a bloquear o reportar la cuenta.",
-      "Conserva los mensajes importantes si hacerlo es seguro.",
-      "Revisa tu privacidad con ayuda de una persona adulta.",
-      "No compartas contraseñas, direcciones ni información personal.",
-      "Evita entrar en discusiones que puedan aumentar el conflicto.",
-      "Si comparten imágenes privadas, pide ayuda adulta inmediatamente para reportarlo.",
-      "Si alguien se hace pasar por ti, informa a la plataforma y a un adulto seguro.",
-      "Si recibes amenazas, no te reúnas con esa persona y pide ayuda."
-    ],
-    questions: [
-      "¿Ocurre en WhatsApp, Instagram, TikTok u otra plataforma?",
-      "¿Te están enviando mensajes privados o publicando comentarios?",
-      "¿Han compartido algo personal sin tu permiso?",
-      "¿La cuenta pertenece a alguien que conoces?",
-      "¿Hay amenazas o intentos de intimidarte?",
-      "¿Tienes a un adulto que pueda ayudarte a revisar la situación?",
-      "¿Esto ocurre desde hace días o comenzó recientemente?",
-      "¿Quieres que pensemos cómo reportarlo?"
-    ]
-  },
-
-  exclusion: {
-    openings: [
-      "Siento que estés viviendo una situación de exclusión.",
-      "Gracias por contarme cómo te están tratando.",
-      "Es importante que puedas sentirte incluido y respetado.",
-      "No tienes que fingir que no te importa que te aparten.",
-      "Quiero entender mejor qué está pasando.",
-      "Lo que cuentas merece ser escuchado.",
-      "Podemos pensar en pequeños pasos para buscar apoyo.",
-      "No tienes que enfrentar esto en soledad."
-    ],
-    validation: [
-      "Mereces formar parte de un ambiente donde te respeten.",
-      "Que un grupo te excluya no determina tu valor.",
-      "No tienes que cambiar tu personalidad para ser aceptado.",
-      "Es válido que te duela sentirte apartado.",
-      "La amistad debe permitir que todos se sientan respetados.",
-      "No eres responsable de las decisiones hirientes de otras personas.",
-      "Tienes derecho a pedir ayuda cuando te aíslan intencionalmente.",
-      "No tienes que perseguir la aceptación de quienes te hacen daño."
-    ],
-    nextSteps: [
-      "Busca a una persona con quien puedas compartir el recreo o una actividad.",
-      "Puedes contarle a tu tutor cómo te está afectando la exclusión.",
-      "Intenta acercarte a compañeros que hayan mostrado amabilidad.",
-      "Pide ayuda si el aislamiento forma parte de burlas o intimidación repetida.",
-      "Puedes explicar a un adulto los momentos concretos en que te dejan fuera.",
-      "Busca un espacio escolar donde te sientas acompañado.",
-      "No te obligues a entrar en un grupo que te trata mal.",
-      "Considera pedir apoyo al orientador escolar."
-    ],
-    questions: [
-      "¿Te excluyen de actividades o también dejan de hablarte?",
-      "¿Sucede con un grupo específico?",
-      "¿Desde cuándo notas ese comportamiento?",
-      "¿Hay alguien en el colegio con quien sí te sientas cómodo?",
-      "¿Has podido hablar de esto con un adulto?",
-      "¿Te excluyen de manera intencional o no sabes qué está pasando?",
-      "¿Qué momento del día te resulta más difícil?",
-      "¿Quieres que pensemos cómo acercarte a alguien de confianza?"
-    ]
-  },
-
-  friend: {
-    openings: [
-      "Es valioso que quieras acompañar a tu amigo.",
-      "Gracias por preocuparte por otra persona.",
-      "Podemos pensar en una forma segura de ayudar.",
-      "Tu interés por escucharle puede ser importante.",
-      "No tienes que resolver tú solo lo que está ocurriendo.",
-      "Es bueno que busques orientación antes de actuar.",
-      "Tu amigo merece sentirse escuchado.",
-      "Vamos a considerar qué puede ayudarle sin ponerlos en peligro."
-    ],
-    validation: [
-      "Escuchar sin juzgar puede ser un primer paso.",
-      "No le culpes por lo que le está sucediendo.",
-      "Respeta su privacidad y evita difundir lo que te cuenta.",
-      "No prometas guardar secretos cuando exista peligro.",
-      "No necesitas enfrentarte a quien lo está intimidando.",
-      "Recuérdale que merece respeto y apoyo.",
-      "Puedes acompañarle sin presionarle para que cuente todo.",
-      "También es válido que tú pidas orientación adulta."
-    ],
-    nextSteps: [
-      "Ofrécele acompañarle a hablar con un docente de confianza.",
-      "Pregúntale qué apoyo necesita y escucha su respuesta.",
-      "Si hay peligro inmediato, avisa a un adulto aunque te haya pedido guardar silencio.",
-      "No difundas capturas ni detalles de su historia.",
-      "Puedes decirle que no tiene que afrontar la situación sin compañía.",
-      "Anímale a contar lo ocurrido a un familiar seguro.",
-      "Si no sabes qué hacer, pide orientación a un adulto.",
-      "Si la situación ocurre en línea, ayúdale a pedir apoyo para reportarla."
-    ],
-    questions: [
-      "¿Tu amigo está a salvo ahora mismo?",
-      "¿Él o ella sabe que quieres ayudarle?",
-      "¿Ha podido hablar con un adulto de confianza?",
-      "¿Quieres que preparemos una frase para ofrecerle compañía?",
-      "¿La situación sucede en el colegio o por internet?",
-      "¿Hay amenazas o agresiones?",
-      "¿Te preocupa que pueda estar en peligro?",
-      "¿Qué es lo que más necesita de ti en este momento?"
-    ]
-  },
-
-  teacher: {
-    openings: [
-      "Gracias por contarme algo tan delicado.",
-      "Quiero tomar en serio lo que estás explicando.",
-      "Siento que estés pasando por esta situación con un adulto del colegio.",
-      "Mereces sentirte seguro en tu centro educativo.",
-      "Es importante que otra persona adulta pueda escucharte.",
-      "No tienes que resolver esto sin ayuda.",
-      "Gracias por confiarme lo que ocurre.",
-      "Podemos pensar en cómo encontrar apoyo fuera de esa situación."
-    ],
-    validation: [
-      "Tener autoridad no le da permiso a una persona para intimidarte.",
-      "No es tu culpa si un adulto cruza tus límites.",
-      "Tienes derecho a que te traten con respeto.",
-      "No tienes que guardar secretos que te hacen sentir inseguro.",
-      "Tu relato merece ser escuchado sin presiones.",
-      "No tienes que enfrentarte a esa persona por tu cuenta.",
-      "Puedes pedir ayuda incluso si no sabes cómo describir exactamente lo sucedido.",
-      "No estás haciendo nada malo al contar lo que te preocupa."
-    ],
-    nextSteps: [
-      "Habla cuanto antes con un familiar o adulto seguro que no esté implicado.",
-      "Busca a un orientador o responsable de protección distinto de la persona señalada.",
-      "No te quedes a solas con esa persona para resolver el problema.",
-      "Pide a un adulto de confianza que te acompañe al hablar del tema.",
-      "Si hay mensajes, consérvalos solo si es seguro y muéstralos a una persona adulta.",
-      "Si la primera persona no te escucha, busca otro adulto seguro.",
-      "No investigues ni intentes obtener pruebas exponiéndote a más riesgos.",
-      "Si te sientes en peligro ahora, busca compañía y ayuda inmediata."
-    ],
-    questions: [
-      "¿Estás a salvo ahora mismo?",
-      "¿Hay un familiar que pueda acompañarte?",
-      "¿Existe otro docente con quien sí te sientas seguro?",
-      "¿Te preocupa volver a estar a solas con esa persona?",
-      "¿Ocurre durante las clases o fuera del horario escolar?",
-      "¿Quieres ayuda para escribir un mensaje a un familiar?",
-      "¿Puedes acudir a una persona adulta que no esté implicada?",
-      "¿Necesitas ayuda inmediata para estar en un lugar seguro?"
-    ]
-  },
-
-  conflict: {
-    openings: [
-      "Gracias por explicar lo que pasó.",
-      "Los conflictos pueden ser difíciles de manejar.",
-      "Quiero entender las dos partes de la situación sin juzgarte.",
-      "Podemos buscar una manera respetuosa de abordar el problema.",
-      "Es positivo que quieras encontrar una solución.",
-      "Vamos a separar lo que ocurrió de cómo te hizo sentir.",
-      "No tienes que resolverlo en medio del enojo.",
-      "Podemos pensar en una respuesta que no empeore las cosas."
-    ],
-    validation: [
-      "Tus sentimientos importan, incluso cuando existe un desacuerdo.",
-      "No es necesario responder con agresiones para defender tu punto de vista.",
-      "Tienes derecho a expresar tus límites con respeto.",
-      "Escuchar a otra persona no significa aceptar malos tratos.",
-      "Un desacuerdo no justifica amenazas ni humillaciones.",
-      "Puedes pedir tiempo antes de continuar una conversación difícil.",
-      "No tienes que aceptar una discusión que te haga sentir inseguro.",
-      "Buscar apoyo para resolver un conflicto es válido."
-    ],
-    nextSteps: [
-      "Cuando ambos estén tranquilos, puedes explicar qué te molestó.",
-      "Intenta hablar de lo ocurrido sin insultos ni amenazas.",
-      "Si no pueden dialogar con calma, pide mediación de un adulto neutral.",
-      "Puedes escribir tus ideas antes de hablar.",
-      "Escucha la otra versión sin abandonar tus propios límites.",
-      "Si aparecen amenazas o agresiones, busca ayuda adulta.",
-      "No difundas el conflicto en redes para conseguir apoyo.",
-      "Puedes pedir una pausa si la conversación se vuelve demasiado intensa."
-    ],
-    questions: [
-      "¿Qué ocurrió antes de que comenzara la discusión?",
-      "¿Qué te gustaría que cambiara?",
-      "¿Ambos han podido explicar cómo se sienten?",
-      "¿Se trata de un desacuerdo o hay intimidación repetida?",
-      "¿Te sientes seguro al hablar con esa persona?",
-      "¿Hay un adulto neutral que pueda ayudar?",
-      "¿Qué resultado te parecería justo?",
-      "¿Quieres que pensemos en cómo expresar lo que necesitas?"
-    ]
-  }
-};
-
-function detectExpandedTopic(text) {
-  if (isAuthorityConcern(text)) return "teacher";
-  if (isLoneliness(text)) return "loneliness";
-  if (isFriendSupport(text)) return "friend";
-
-  if (hasNickname(text)) return "nickname";
-
-  if (includesAny(text, [
-    "inventan cosas de mi", "hablan mal de mi", "difunden rumores",
-    "chismes sobre mi", "estan hablando de mi", "dicen mentiras de mi",
-    "publicaron rumores", "me acusan de algo que no hice",
-    "comparten informacion privada", "estan difundiendo cosas"
-  ])) return "rumors";
-
-  if (includesAny(text, [
-    "whatsapp", "instagram", "tiktok", "redes sociales",
-    "grupo de chat", "chat del colegio", "me mandan mensajes",
-    "publicaron una foto", "subieron una foto", "cuenta falsa",
-    "me amenazan por internet", "me escriben por redes"
-  ]) && includesAny(text, [
-    "molestan", "acoso", "insultan", "burlan", "amenazan",
-    "foto", "mensaje", "humillan", "excluyen", "difunden",
-    "me hacen", "me escriben"
-  ])) return "digital";
-
-  if (includesAny(text, [
-    "me dejan fuera", "no me invitan", "me excluyen",
-    "no me incluyen", "me ignoran", "me apartan",
-    "nadie quiere sentarse conmigo", "no me dejan participar",
-    "me dejan solo en el recreo", "me dejan sola en el recreo"
-  ])) return "exclusion";
-
-  if (includesAny(text, [
-    "discuti con", "discutimos", "tuvimos una pelea",
-    "me enoje con", "esta enojado conmigo", "esta enojada conmigo",
-    "nos llevamos mal", "no nos entendemos", "tuvimos un problema",
-    "quiero solucionar un conflicto", "me pelee con"
-  ])) return "conflict";
-
-  return null;
-}
-
-let responseSequence = 0;
-
-function respond(messages) {
-  const userMessages = messages.filter(message => message.role === "user").map(message => message.content);
-  const current = userMessages[userMessages.length - 1] || "";
-  const currentText = normalize(current);
-  const conversationSeed = messages.slice(-10).map(message => `${message.role}:${normalize(message.content)}`).join("|") || currentText;
-  // Añade un contador para que dos consultas iguales también puedan recibir
-  // combinaciones diferentes dentro del mismo despliegue.
-  const seed = `${conversationSeed}|variation:${++responseSequence}`;
-  const recentUserMessages = userMessages.slice(-6);
-  const recentText = normalize(recentUserMessages.join(" "));
-  const name = findRecentPersonName(recentUserMessages);
-
-  
-// PRIORIDAD: posibles agresiones sexuales o lesiones graves
-const objectAssault = urgentObjectAssaultReply(recentText);
-if (objectAssault) return objectAssault;
-
-// PRIORIDAD: situaciones de riesgo emocional
-const crisis = crisisReply(normalize(userMessages.slice(-3).join(" ")));
-if (crisis) return crisis;
-
-// NUEVAS RESPUESTAS CONTEXTUALES
-const expandedTopic = detectExpandedTopic(recentText);
-
-if (expandedTopic) {
-  let reply = compose(
-    seed,
-    expandedBanks[expandedTopic],
-    `expanded-${expandedTopic}`
-  );
-
+  // Mencionar el nombre propio de forma natural y sin inventar detalles
+  // (solo en categorías donde el nombre corresponde a un compañero, amigo o docente mencionado)
   if (
-    name &&
-    ["nickname", "rumors", "digital", "exclusion", "conflict"].includes(expandedTopic)
+    ctx.recentName &&
+    [
+      "nicknames_humiliation",
+      "bullying_general",
+      "physical_violence",
+      "threats_intimidation",
+      "social_exclusion",
+      "rumors_gossip",
+      "cyberbullying",
+      "peer_conflict",
+      "authority_problem",
+      "helping_friend"
+    ].includes(intent.category)
   ) {
-    reply = `Sobre ${name}: ${reply}`;
+    if (intent.category === "helping_friend") {
+      parts.push(`Respecto a lo que está viviendo ${ctx.recentName}:`);
+    } else if (intent.category === "peer_conflict") {
+      parts.push(`Sobre lo que ocurrió con ${ctx.recentName}:`);
+    } else {
+      parts.push(`Sobre lo que mencionas acerca de ${ctx.recentName}:`);
+    }
   }
 
-  return reply;
-}
-
-
-  if (isAuthorityConcern(recentText)) {
-    let reply = compose(
-      seed,
-      teacherBank,
-      "teacher",
-      "¿Estás a salvo ahora mismo y puedes acudir a un adulto de confianza que no esté implicado?"
+  // Reconocer si el problema es repetido ("todos los días", "siempre", "no deja de")
+  if (
+    ctx.frequency === "repeated" &&
+    [
+      "nicknames_humiliation",
+      "bullying_general",
+      "physical_violence",
+      "threats_intimidation",
+      "social_exclusion",
+      "cyberbullying",
+      "discrimination"
+    ].includes(intent.category)
+  ) {
+    parts.push(
+      "Como me cuentas que esto viene repitiéndose de manera constante, es aún más importante no dejarlo pasar y actuar con apoyo adulto."
     );
-    if (includesAny(recentText, teacherKeywordsForSafety)) {
-      reply += " Si esa persona te pide guardar secretos, enviar imágenes o estar a solas, cuéntaselo cuanto antes a un adulto seguro fuera de esa situación. No tienes que aceptar esas peticiones.";
-    }
-    return reply;
   }
 
-  if (/^(hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches)\b/.test(currentText) && currentText.length < 50) {
-    return pick([
-      "¡Hola! 💙 Soy Lumy. Puedes contarme lo que ocurre con tus propias palabras; no hace falta que lo ordenes todo. ¿Qué te gustaría conversar?",
-      "¡Hola! Qué bueno tenerte por aquí. Puedo orientarte sobre bullying, ciberacoso y convivencia escolar. ¿Qué tienes en mente hoy?",
-      "¡Hola! Soy Lumy, de Contigo. Este es un espacio para buscar orientación con respeto. ¿Cómo puedo acompañarte hoy?",
-      "¡Holi! 💙 Cuéntame qué te preocupa. No necesitas compartir nombres completos ni datos de tu colegio."
-    ], seed, "greeting");
-  }
-
-  if (isLoneliness(recentText) && (isLoneliness(currentText) || currentText.length < 55 || includesAny(currentText, ["hablar", "escuchar", "solo", "sola", "nadie", "amigo", "amiga"]))) {
-    return compose(seed, lonelyBank, "lonely");
-  }
-
-  if (isFriendSupport(recentText)) {
-    return compose(seed, friendBank, "friend");
-  }
-
-  if (hasNickname(current) || (hasNickname(recentUserMessages.join(" ")) && includesAny(currentText, ["si", "no", "eso", "apodo", "me hace sentir", "me dice"]))) {
-    const theme = detectNicknameTheme(recentText);
-    let reply = compose(seed, nicknameBank, "nickname");
-    if (name) reply = `Sobre ${name}: ${reply}`;
-    if (theme === "appearance") {
-      reply += " Recuerda: tu cuerpo o apariencia no necesitan cambiar para que merezcas respeto.";
-    } else if (theme === "ability") {
-      reply += " Un insulto sobre tus capacidades no determina lo que puedes aprender o conseguir.";
-    }
-    return reply;
-  }
-
-  const behavior = classifyBehavior(recentText);
-  if (hasBullyingContext(recentText)) {
-    return buildBullyingReply(seed, name, behavior);
-  }
-
-  if (includesAny(currentText, ["que es bullying", "que significa bullying", "tipos de bullying", "como reconocer el bullying", "como saber si es bullying", "que es el acoso escolar"])) {
-    return pick([
-      "El bullying es una forma de intimidación que suele repetirse y puede incluir burlas, insultos, exclusión, amenazas o agresiones. También puede ocurrir por internet. Un desacuerdo aislado no siempre es bullying, pero cualquier situación que te haga sentir inseguro merece atención. ¿Quieres hablar de algún ejemplo?",
-      "Se suele hablar de bullying cuando hay comportamientos de intimidación que se repiten y existe una diferencia de poder o dificultad para defenderse. Puede ser verbal, social, físico o digital. Aunque no sepas cómo llamarlo, puedes pedir ayuda si te está afectando. ¿Qué situación te hizo preguntarlo?",
-      "El acoso escolar no siempre se ve igual: puede ocurrir con palabras, exclusión, amenazas, agresiones o mensajes en línea. Lo importante es no minimizarlo y buscar apoyo. ¿Te gustaría que revisemos una situación concreta sin compartir datos personales?"
-    ], seed, "definition");
-  }
-
-  if (includesAny(currentText, ["que hago", "como puedo responder", "que le digo", "como hago para que pare", "como lo soluciono", "no se que hacer"])) {
-    return compose(seed, generalBank, "how-to");
-  }
-
-  if (includesAny(currentText, ["gracias", "muchas gracias", "vale gracias"])) {
-    return pick([
-      "De nada. 💙 Gracias por confiar en Contigo. Recuerda que mereces respeto y apoyo; no tienes que llevar una situación difícil en soledad.",
-      "Me alegra que hayas podido hablarlo. Si vuelve a preocuparte, busca también a una persona adulta de confianza que pueda acompañarte en la vida real.",
-      "Aquí tienes un espacio para ordenar tus ideas. Y recuerda que pedir apoyo a alguien seguro también es importante. 💙"
-    ], seed, "thanks");
-  }
-
-  return compose(seed, generalBank, "general");
+  return parts.join(" ");
 }
 
+function selectResourceNote(intent, ctx) {
+  switch (intent.category) {
+    case "sexual_violence_protocol":
+      return OFFICIAL_RESOURCES.sexualViolencePeru;
+    case "self_harm_crisis":
+      return `${OFFICIAL_RESOURCES.mentalHealthPeru} ${OFFICIAL_RESOURCES.emergencyPeru}`;
+    case "immediate_danger":
+      return OFFICIAL_RESOURCES.emergencyPeru;
+    case "family_violence":
+      return OFFICIAL_RESOURCES.familyViolencePeru;
+    case "authority_problem":
+      return OFFICIAL_RESOURCES.authorityAbusePeru;
+    case "physical_violence":
+    case "threats_intimidation":
+    case "cyberbullying":
+    case "discrimination":
+    case "bullying_general":
+      return OFFICIAL_RESOURCES.schoolBullyingPeru;
+    case "loneliness_emotional":
+      return OFFICIAL_RESOURCES.mentalHealthPeru;
+    case "how_to_ask_help":
+      return `${OFFICIAL_RESOURCES.schoolBullyingPeru} También cuentas con la Línea 100 y la Línea 113 (opción 5).`;
+    default:
+      if (ctx.asksDirectAction) {
+        return OFFICIAL_RESOURCES.schoolBullyingPeru;
+      }
+      return "";
+  }
+}
+
+export function respond(messages = []) {
+  const ctx = analyzeContext(messages);
+  const intent = classifyIntent(ctx);
+  const lastAssistant = ctx.assistantMessages[ctx.assistantMessages.length - 1] || "";
+
+  const conversationFingerprint = messages
+    .slice(-8)
+    .map(m => `${m.role}:${normalize(m.content)}`)
+    .join("|");
+  const seed = `${conversationFingerprint}|turn:${ctx.turnCount}|seq:${++responseCounter}`;
+
+  // ---------------------------------------------------------------------------
+  // CASO A: PROTOCOLO ESPECIAL DE VIOLENCIA SEXUAL Y ABUSO (10 PUNTOS OBLIGATORIOS)
+  // ---------------------------------------------------------------------------
+  if (intent.category === "sexual_violence_protocol") {
+    const bank = RESPONSE_BANKS.sexual_violence_protocol;
+    const part1 = pickVariant(bank.recognitionAndNoBlame, seed, "sv-rec", lastAssistant);
+    const groomingNote =
+      intent.subType === "grooming_or_sextortion"
+        ? pickVariant(bank.groomingSpecificAdvice, seed, "sv-groom", lastAssistant)
+        : "";
+    const part2 = pickVariant(bank.medicalAndSafetyUrgent, seed, "sv-med", lastAssistant);
+    const adultOptions =
+      bank.trustedAdultByContext[intent.aggressorContext] || bank.trustedAdultByContext.other;
+    const part3 = pickVariant(adultOptions, seed, "sv-adult", lastAssistant);
+    const part4 = pickVariant(bank.privacyAndSimplePhrase, seed, "sv-priv", lastAssistant);
+
+    return [
+      part1,
+      groomingNote,
+      part2,
+      part3,
+      part4,
+      OFFICIAL_RESOURCES.sexualViolencePeru
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CASO B: PROTOCOLO DE RIESGO DE AUTOLESIÓN O SUICIDIO
+  // ---------------------------------------------------------------------------
+  if (intent.category === "self_harm_crisis") {
+    const bank = RESPONSE_BANKS.self_harm_crisis;
+    return [
+      pickVariant(bank.openings, seed, "sh-open", lastAssistant),
+      pickVariant(bank.safetyAction, seed, "sh-act", lastAssistant),
+      OFFICIAL_RESOURCES.mentalHealthPeru,
+      OFFICIAL_RESOURCES.emergencyPeru
+    ].join("\n\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CASO C: PROTOCOLO DE PELIGRO INMEDIATO Y EMERGENCIA ACTIVA
+  // ---------------------------------------------------------------------------
+  if (intent.category === "immediate_danger") {
+    const bank = RESPONSE_BANKS.immediate_danger;
+    return [
+      pickVariant(bank.openings, seed, "id-open", lastAssistant),
+      pickVariant(bank.urgentSteps, seed, "id-step", lastAssistant),
+      OFFICIAL_RESOURCES.emergencyPeru
+    ].join("\n\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CASO D: SALUDOS, AGRADECIMIENTOS Y DESPEDIDAS
+  // ---------------------------------------------------------------------------
+  if (intent.category === "greeting") {
+    return pickVariant(RESPONSE_BANKS.greetings, seed, "greet", lastAssistant);
+  }
+
+  if (intent.category === "gratitude_closing") {
+    return pickVariant(RESPONSE_BANKS.gratitude, seed, "thanks", lastAssistant);
+  }
+
+  if (intent.category === "farewell") {
+    return pickVariant(RESPONSE_BANKS.farewells, seed, "bye", lastAssistant);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CASO E: CONSULTAS EDUCATIVAS ("¿QUÉ ES EL BULLYING?")
+  // ---------------------------------------------------------------------------
+  if (intent.category === "educational_info") {
+    const bank = RESPONSE_BANKS.educational_info;
+    const parts = [
+      pickVariant(bank.explanations, seed, "edu-exp", lastAssistant),
+      pickVariant(bank.guidance, seed, "edu-gui", lastAssistant),
+      OFFICIAL_RESOURCES.schoolBullyingPeru
+    ];
+    if (!ctx.asksDirectAction) {
+      parts.push(pickVariant(bank.questions, seed, "edu-q", lastAssistant));
+    }
+    return parts.join("\n\n");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CASO F: CATEGORÍAS MODULARES DE ORIENTACIÓN ESCOLAR Y FAMILIAR
+  // ---------------------------------------------------------------------------
+  const bank = RESPONSE_BANKS[intent.category] || RESPONSE_BANKS.general_orientation;
+  const bridge = buildContextualBridge(ctx, intent);
+  const opening = pickVariant(bank.openings, seed, `${intent.category}-open`, lastAssistant);
+  const validation = pickVariant(bank.validations, seed, `${intent.category}-val`, lastAssistant);
+  const action1 = pickVariant(bank.actions, seed, `${intent.category}-act1`, lastAssistant);
+
+  // Si el estudiante pregunta directamente qué hacer ("¿qué hago?", "orientación"),
+  // entregamos un segundo consejo práctico complementario y omitimos preguntas innecesarias.
+  let action2 = "";
+  if (ctx.asksDirectAction && bank.actions.length > 1) {
+    action2 = pickVariant(
+      bank.actions.filter(a => a !== action1),
+      seed,
+      `${intent.category}-act2`,
+      lastAssistant
+    );
+  }
+
+  // Matiz específico si los apodos son sobre apariencia física
+  let specificSubNote = "";
+  if (intent.category === "nicknames_humiliation" && intent.subType === "appearance_mockery") {
+    specificSubNote =
+      "Recuerda especialmente esto: no tienes que cambiar absolutamente nada de tu cuerpo ni de tu apariencia física para merecer respeto.";
+  }
+
+  const resourceNote = selectResourceNote(intent, ctx);
+
+  // Regla de preguntas finales:
+  // Evitar terminar todos los mensajes con preguntas automáticas innecesarias.
+  // Cuando el estudiante pide qué hacer o ya estamos en seguimiento avanzado,
+  // cerramos con orientación directa y práctica sin pregunta.
+  const shouldIncludeQuestion =
+    !ctx.asksDirectAction &&
+    ctx.turnCount <= 2 &&
+    Array.isArray(bank.questions) &&
+    bank.questions.length > 0 &&
+    ["general_orientation", "peer_conflict", "social_exclusion", "rumors_gossip"].includes(
+      intent.category
+    );
+
+  const closingQuestion = shouldIncludeQuestion
+    ? pickVariant(bank.questions, seed, `${intent.category}-q`, lastAssistant)
+    : "";
+
+  const firstParagraph = [bridge, opening, validation, specificSubNote].filter(Boolean).join(" ");
+  const secondParagraph = [action1, action2].filter(Boolean).join(" ");
+
+  return [firstParagraph, secondParagraph, resourceNote, closingQuestion]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// -----------------------------------------------------------------------------
+// 10. ENDPOINTS HTTP COMPATIBLES CON public/index.html Y RENDER
+// -----------------------------------------------------------------------------
 app.post("/api/chat", (req, res) => {
   try {
     const incoming = req.body?.messages;
-    if (!Array.isArray(incoming) || incoming.length === 0 || incoming.length > 12) {
+    if (!Array.isArray(incoming) || incoming.length === 0 || incoming.length > 16) {
       return res.status(400).json({ error: "Formato de conversación no válido." });
     }
 
-    const messages = incoming.map(message => {
-      if (!message || !["user", "assistant"].includes(message.role) || typeof message.content !== "string") {
-        throw new Error("Mensaje no válido.");
+    const sanitizedMessages = [];
+    for (const message of incoming.slice(-12)) {
+      if (
+        !message ||
+        !["user", "assistant"].includes(message.role) ||
+        typeof message.content !== "string"
+      ) {
+        return res.status(400).json({ error: "Uno de los mensajes enviados no tiene un formato válido." });
       }
-      return { role: message.role, content: message.content.slice(0, 1200) };
-    });
-
-    if (!messages.some(message => message.role === "user")) {
-      return res.status(400).json({ error: "No se encontró un mensaje del estudiante." });
+      const trimmed = message.content.trim().slice(0, 1200);
+      if (trimmed.length > 0) {
+        sanitizedMessages.push({ role: message.role, content: trimmed });
+      }
     }
 
-    const reply = respond(messages);
+    if (!sanitizedMessages.some(message => message.role === "user")) {
+      return res.status(400).json({ error: "No se encontró ningún mensaje del estudiante." });
+    }
+
+    const reply = respond(sanitizedMessages);
     return res.json({ reply });
   } catch (error) {
-    console.error("Error en el chatbot:", error?.message || "Error desconocido");
-    return res.status(400).json({ error: "No se pudo procesar el mensaje. Inténtalo de nuevo." });
+    console.error("Error procesando solicitud en Lumy:", error?.message || "Error desconocido");
+    return res.status(500).json({
+      error:
+        "No se pudo procesar el mensaje en este momento. Si estás en una situación urgente, acude de inmediato a un adulto de confianza o llama al 105 / Línea 100."
+    });
   }
 });
 
-app.get("/health", (_req, res) => res.json({
-  ok: true,
-  chatbot: "local-rules",
-  openaiRequired: false,
-  responseCombinations: {
-    bullying: 8 * 8 * 8 * 10,
-    loneliness: 8 * 8 * 8 * 8,
-    teacherConcern: 8 * 8 * 8,
-    nicknames: 8 * 8 * 8 * 8,
-    helpingFriends: 8 * 8 * 8 * 8,
-    general: 8 * 8 * 8 * 8
-  }
-}));
+app.get("/health", (_req, res) =>
+  res.json({
+    ok: true,
+    project: "Lumy",
+    version: "2.0.0",
+    chatbot: "lumy-contextual-safety-engine",
+    openaiRequired: false,
+    categoriesSupported: [
+      "sexual_violence_protocol",
+      "self_harm_crisis",
+      "immediate_danger",
+      "family_violence",
+      "authority_problem",
+      "physical_violence",
+      "threats_intimidation",
+      "cyberbullying",
+      "discrimination",
+      "rumors_gossip",
+      "social_exclusion",
+      "nicknames_humiliation",
+      "bullying_general",
+      "loneliness_emotional",
+      "peer_conflict",
+      "helping_friend",
+      "how_to_ask_help",
+      "educational_info",
+      "general_orientation"
+    ]
+  })
+);
 
-app.listen(port, () => {
-  console.log(`Lumy está funcionando en el puerto ${port}`);
-});
+// Solo inicia el servidor HTTP si el archivo se ejecuta directamente
+// (permite importar `respond` o `app` en baterías de pruebas sin conflicto de puertos)
+if (process.env.LUMY_TEST_MODE !== "1") {
+  app.listen(port, () => {
+    console.log(`Lumy v2.0 está funcionando correctamente en el puerto ${port}`);
+  });
+}
+
+export default app;

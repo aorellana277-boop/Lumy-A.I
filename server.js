@@ -45,7 +45,7 @@ app.use(
 app.use(express.static("public"));
 
 // =============================================================================
-// LUMY v2.0 — MOTOR CONVERSACIONAL EDUCATIVO DE ORIENTACIÓN Y PROTECCIÓN ESCOLAR
+// LUMY v2.1 — MOTOR CONVERSACIONAL EDUCATIVO DE ORIENTACIÓN Y PROTECCIÓN ESCOLAR
 // Arquitectura NLP basada en reglas semánticas, análisis contextual multi-turno,
 // extracción segura de entidades, priorización de riesgos y composición modular.
 // No requiere claves de API externas ni servicios de pago para funcionar.
@@ -838,16 +838,78 @@ function hashText(value = "") {
   return hash >>> 0;
 }
 
-function pickVariant(options = [], seed = "", salt = "", previousAssistantText = "") {
+// Historial breve de variantes por sección. Se combina con el historial que
+// envía el navegador, así la rotación también funciona cuando Render reinicia
+// el proceso y cuando el cliente conserva los mensajes anteriores.
+const RECENT_VARIANTS_BY_SLOT = new Map();
+const MAX_RECENT_VARIANTS_PER_SLOT = 4;
+
+function pickVariant(options = [], seed = "", salt = "", previousAssistantTexts = []) {
   if (!Array.isArray(options) || options.length === 0) return "";
-  const baseIndex = hashText(`${seed}|${salt}`) % options.length;
-  for (let offset = 0; offset < options.length; offset += 1) {
-    const candidate = options[(baseIndex + offset) % options.length];
-    if (!previousAssistantText || !previousAssistantText.includes(candidate)) {
-      return candidate;
-    }
+
+  const assistantHistory = Array.isArray(previousAssistantTexts)
+    ? previousAssistantTexts
+    : previousAssistantTexts
+      ? [previousAssistantTexts]
+      : [];
+  const normalizedAssistantHistory = assistantHistory
+    .filter(Boolean)
+    .slice(-8)
+    .map(text => normalizeRaw(text));
+
+  const recentForSlot = RECENT_VARIANTS_BY_SLOT.get(salt) || [];
+  const normalizedOptions = options.map(option => normalizeRaw(option));
+
+  const wasShownRecently = (normalizedOption) => {
+    if (!normalizedOption) return false;
+    const appearsInConversation = normalizedAssistantHistory.some(previous =>
+      previous.includes(normalizedOption)
+    );
+    return appearsInConversation || recentForSlot.includes(normalizedOption);
+  };
+
+  // Primero intenta usar una variante que no aparezca en las últimas respuestas.
+  const availableIndices = [];
+  for (let index = 0; index < options.length; index += 1) {
+    if (!wasShownRecently(normalizedOptions[index])) availableIndices.push(index);
   }
-  return options[baseIndex];
+
+  let selectedIndex;
+  if (availableIndices.length > 0) {
+    const offset = hashText(`${seed}|${salt}|${responseCounter}`) % availableIndices.length;
+    selectedIndex = availableIndices[offset];
+  } else {
+    // Si ya se usaron todas las opciones, recupera la menos reciente en vez de
+    // volver siempre a la primera o repetir una frase recién mostrada.
+    let oldestIndex = 0;
+    let oldestUse = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < options.length; index += 1) {
+      const lastUse = recentForSlot.lastIndexOf(normalizedOptions[index]);
+      const recency = lastUse === -1 ? -1 : lastUse;
+      if (recency < oldestUse) {
+        oldestUse = recency;
+        oldestIndex = index;
+      }
+    }
+    selectedIndex = oldestIndex;
+  }
+
+  const selected = options[selectedIndex];
+  const selectedNormalized = normalizedOptions[selectedIndex];
+  const updatedHistory = recentForSlot.filter(item => item !== selectedNormalized);
+  updatedHistory.push(selectedNormalized);
+  RECENT_VARIANTS_BY_SLOT.set(
+    salt,
+    updatedHistory.slice(-Math.min(MAX_RECENT_VARIANTS_PER_SLOT, Math.max(1, options.length - 1)))
+  );
+
+  // Evita que el mapa crezca indefinidamente si se incorporan nuevas secciones.
+  if (RECENT_VARIANTS_BY_SLOT.size > 256) {
+    const oldestKey = RECENT_VARIANTS_BY_SLOT.keys().next().value;
+    RECENT_VARIANTS_BY_SLOT.delete(oldestKey);
+  }
+
+  return selected;
 }
 
 // -----------------------------------------------------------------------------
@@ -1459,6 +1521,394 @@ const RESPONSE_BANKS = {
 };
 
 // -----------------------------------------------------------------------------
+// 8.21 EXPANSIÓN DE RESPUESTAS: MÁS VARIANTES Y MENOS FRASES RECICLADAS
+// Se agregan opciones a los bancos originales sin alterar sus categorías.
+// El protocolo de autolesión conserva su contenido de seguridad existente.
+// -----------------------------------------------------------------------------
+const EXTRA_RESPONSE_VARIANTS = {
+  sexual_violence_protocol: {
+    recognitionAndNoBlame: [
+      "Te tomo en serio. Nadie tiene derecho a obligarte, tocarte o lastimarte; lo ocurrido no es culpa tuya y mereces recibir protección y atención sin ser juzgado.",
+      "Gracias por contarlo. No tienes que demostrar nada ni explicar detalles íntimos para que te crean y te ayuden: tu seguridad y tu bienestar son lo primero."
+    ],
+    medicalAndSafetyUrgent: [
+      "Busca un lugar seguro y pide que una persona adulta protectora te acompañe a un servicio de salud, especialmente si el hecho fue reciente, sientes dolor o tienes alguna lesión. El personal sanitario puede orientarte con respeto.",
+      "No te quedes cerca de quien pudo hacerte daño. Acude con un adulto seguro a un centro de salud para que evalúen cómo estás y te expliquen las opciones de cuidado disponibles."
+    ],
+    trustedAdultByContext: {
+      family: [
+        "Si el riesgo viene de alguien de tu familia, busca a una persona adulta de fuera de ese entorno que pueda intervenir con seguridad, como un docente de confianza, personal de salud o una autoridad de protección."
+      ],
+      authority: [
+        "Si está involucrado alguien del colegio, informa a un familiar protector y a una autoridad externa o escolar que no dependa de esa persona. No tienes que reunirte ni hablar a solas con quien te hizo daño."
+      ],
+      other: [
+        "Elige a una persona adulta que te escuche, te crea y pueda acompañarte físicamente a recibir ayuda. Si la primera persona no actúa, acude a otra hasta encontrar protección."
+      ]
+    },
+    privacyAndSimplePhrase: [
+      "No escribas aquí nombres completos, direcciones ni detalles íntimos. Puedes pedir apoyo con una frase sencilla: «Necesito que me escuches, que me creas y que me acompañes a un lugar seguro para recibir ayuda».",
+      "No tienes que contar la historia muchas veces ni responder preguntas que te hagan sentir incómodo. Puedes decir: «Me pasó algo que cruzó mis límites y necesito que me protejas y me acompañes a recibir atención»."
+    ],
+    groomingSpecificAdvice: [
+      "No tienes que enviar imágenes, aceptar encuentros ni mantener conversaciones que te incomoden. Guarda los mensajes si es seguro hacerlo y muéstralos únicamente a un adulto protector o a las autoridades correspondientes.",
+      "Las amenazas para conseguir imágenes o mantener un secreto no son tu responsabilidad. Corta el contacto cuando puedas hacerlo sin riesgo y busca hoy apoyo adulto para que te ayuden a reportarlo."
+    ]
+  },
+  immediate_danger: {
+    openings: [
+      "Lo urgente ahora no es explicar todo, sino conseguir que estés acompañado y fuera del peligro. Tu seguridad va primero.",
+      "Gracias por avisar. No esperes a que la situación empeore: busca apoyo presencial de una persona adulta segura y pide ayuda de emergencia si el riesgo continúa."
+    ],
+    urgentSteps: [
+      "Ve hacia un lugar con personal responsable o personas de confianza y explica claramente que no te sientes seguro. No aceptes encontrarte a solas con quien te amenaza.",
+      "Pide a un adulto que permanezca contigo y que contacte a los servicios de emergencia si alguien puede lastimarte ahora. No necesitas seguir escribiendo mientras buscas ayuda presencial."
+    ]
+  },
+  family_violence: {
+    openings: [
+      "Siento que estés enfrentando una situación así dentro de tu entorno familiar. Mereces sentirte protegido en casa y también tienes derecho a pedir ayuda fuera de ella.",
+      "Lo que ocurre en casa importa y no debe minimizarse. Gracias por contarlo; vamos a priorizar que puedas hablar con alguien que sí te cuide."
+    ],
+    validations: [
+      "Que una persona sea tu padre, madre o familiar no convierte los golpes, amenazas o humillaciones en algo aceptable.",
+      "Pedir ayuda no significa que estés exagerando ni que seas desleal a tu familia. Significa que estás buscando seguridad y apoyo."
+    ],
+    actions: [
+      "Busca a un adulto protector que no esté involucrado en el maltrato. Puedes acudir a un familiar de confianza, a un docente, al psicólogo del colegio o a un servicio de protección.",
+      "Si te preocupa volver a casa, comunícalo antes a un adulto responsable del colegio y explica que necesitas que te ayuden a encontrar una forma segura de regresar o recibir protección.",
+      "Si no te escuchan en casa, habla con otra persona adulta y repite que necesitas ayuda. No tienes que resolver el problema ni mediar entre adultos por tu cuenta."
+    ],
+    questions: [
+      "¿Hay una persona adulta fuera de casa con quien puedas hablar hoy y que pueda acompañarte?",
+      "¿Te sientes seguro en el lugar donde estás ahora?"
+    ]
+  },
+  authority_problem: {
+    openings: [
+      "Es especialmente difícil pedir ayuda cuando la persona que te incomoda tiene autoridad en el colegio. Aun así, tienes derecho a que te escuchen y te protejan.",
+      "Gracias por explicarlo. La autoridad de un docente no le da permiso para intimidar, humillar o hacerte sentir inseguro."
+    ],
+    validations: [
+      "Puedes expresar que algo te parece injusto o inadecuado sin que eso signifique faltar el respeto.",
+      "No deberías tener que elegir entre sentirte seguro y tener miedo a una represalia escolar. Es importante que otro adulto responsable conozca lo ocurrido."
+    ],
+    actions: [
+      "Anota para ti la fecha, el lugar y una descripción breve de lo ocurrido. Compártelo con tu familia y con una autoridad escolar que no esté implicada.",
+      "Pide que cualquier reunión sobre el problema se realice con un familiar o adulto de confianza presente; no tienes que tratar el asunto a solas con la persona involucrada.",
+      "Si tu primer intento no recibe atención, comunica el caso a la Dirección, a la UGEL o a los canales oficiales de convivencia escolar junto con un adulto protector."
+    ],
+    questions: [
+      "¿Hay otro docente, tutor o familiar que pueda acompañarte para comunicarlo?",
+      "¿Te preocupa que esa persona tome represalias si cuentas lo ocurrido?"
+    ]
+  },
+  physical_violence: {
+    openings: [
+      "Que te hayan agredido físicamente merece una respuesta seria del colegio y de los adultos responsables. No tienes que minimizarlo.",
+      "Lamento que hayas vivido eso. Lo importante es que recibas apoyo, que revisen cualquier lesión y que no quedes expuesto a otra agresión."
+    ],
+    validations: [
+      "No necesitas responder con golpes para demostrar que mereces respeto. Pedir intervención adulta es una forma válida de protegerte.",
+      "Aunque haya ocurrido una sola vez, una agresión física debe comunicarse y atenderse; no tienes que esperar a que se repita."
+    ],
+    actions: [
+      "Informa el hecho cuanto antes a un adulto del colegio y a tu familia. Pide que registren lo sucedido y acuerden medidas para mantenerte seguro.",
+      "Si te duele alguna parte del cuerpo o te encuentras mal, solicita que un adulto te acompañe a recibir valoración médica.",
+      "Si temes encontrarte otra vez con quien te agredió, pide que un adulto responsable te acompañe en los momentos o lugares donde podría ocurrir."
+    ],
+    questions: [
+      "¿Ya hay un adulto del colegio que conozca lo ocurrido y pueda protegerte?",
+      "¿Necesitas que te ayude a redactar un mensaje para informar la agresión a tu tutor?"
+    ]
+  },
+  threats_intimidation: {
+    openings: [
+      "Las amenazas no son algo que tengas que aguantar para evitar problemas. Es correcto pedir ayuda antes de que ocurra otra situación.",
+      "Entiendo que estés alerta o con miedo. Vamos a priorizar que no tengas que estar a solas con quienes te intimidan."
+    ],
+    validations: [
+      "No eres responsable de las decisiones de quien te amenaza, y no tienes que aceptar chantajes ni entregar tus pertenencias por miedo.",
+      "Contar una amenaza a un adulto no es crear un problema: es dar la oportunidad de prevenir una agresión."
+    ],
+    actions: [
+      "Comunica la amenaza a tu tutor o a Dirección y solicita un plan concreto de acompañamiento en recreos, pasillos y salida.",
+      "Si la amenaza tiene una fecha o un lugar concreto, informa esos datos a un familiar y al colegio antes de que llegue ese momento.",
+      "No respondas a provocaciones ni aceptes reunirte para «arreglarlo» a solas. Busca compañía adulta y conserva los mensajes si los recibiste por escrito."
+    ],
+    questions: [
+      "¿La amenaza sigue vigente o ya hay un adulto que intervino?",
+      "¿Necesitas ayuda para explicar al colegio qué medidas de protección estás solicitando?"
+    ]
+  },
+  cyberbullying: {
+    openings: [
+      "Lo que sucede en internet también puede afectar tu tranquilidad fuera de la pantalla. No tienes que gestionarlo sin apoyo.",
+      "Lamento que estén usando redes o chats para hacerte daño. Tu privacidad merece respeto y hay pasos para pedir que el contenido sea revisado."
+    ],
+    validations: [
+      "No es tu culpa que otras personas publiquen, compartan o manipulen contenido para avergonzarte.",
+      "No tienes que contestar a cada mensaje ni justificarte ante quienes te atacan. Prioriza tu seguridad y pide apoyo."
+    ],
+    actions: [
+      "Con ayuda de un adulto, reporta la cuenta o publicación en la plataforma y revisa los ajustes de privacidad para limitar quién puede contactarte.",
+      "Si el contenido involucra amenazas o material íntimo, no lo reenvíes ni lo publiques de nuevo. Pide apoyo a un adulto protector y a las autoridades competentes.",
+      "Si la situación involucra compañeros, entrega la información a tu tutor o al responsable de convivencia y solicita que también intervenga el colegio."
+    ],
+    questions: [
+      "¿El contenido sigue publicado o ya pudiste reportarlo con ayuda de una persona adulta?",
+      "¿Hay un adulto seguro que pueda ayudarte a revisar las opciones de reporte de esa red?"
+    ]
+  },
+  discrimination: {
+    openings: [
+      "Nadie debería hacerte sentir inferior por tus características, tu historia o tu manera de ser. Gracias por confiarme lo que sucede.",
+      "Lo que describes merece atención: el respeto no depende de cómo te ves, de dónde vienes ni de tus capacidades."
+    ],
+    validations: [
+      "No tienes que ocultar partes de ti para conseguir aceptación. El problema está en el trato discriminatorio, no en quién eres.",
+      "Es válido que te afecte escuchar comentarios prejuiciosos; no tienes que fingir que no te duelen."
+    ],
+    actions: [
+      "Describe a tu tutor o a Convivencia Escolar qué comentarios o exclusiones ocurrieron, cuándo y quiénes estaban presentes. Pide que se intervenga.",
+      "Busca apoyo de compañeros que te traten con respeto y de un adulto que pueda frenar los comentarios sin exponerte a más burlas.",
+      "Si los comentarios aparecen en redes, conserva la información necesaria y repórtala con apoyo de un adulto, sin difundirla entre más personas."
+    ],
+    questions: [
+      "¿Ocurrió en clase, en el recreo o a través de redes?",
+      "¿Hay alguien del colegio que haya presenciado lo que pasó y pueda apoyarte?"
+    ]
+  },
+  rumors_gossip: {
+    openings: [
+      "Es muy desgastante sentir que otras personas hablan de ti o difunden cosas que no son ciertas. Mereces que te traten con respeto.",
+      "Gracias por explicarlo. Los rumores pueden afectar tus relaciones y tu tranquilidad, pero no tienes que enfrentarlos sin ayuda."
+    ],
+    validations: [
+      "Que varias personas repitan una historia no la convierte en verdad ni define quién eres.",
+      "No estás obligado a responder públicamente a cada comentario ni a demostrar tu valor frente a quienes difunden rumores."
+    ],
+    actions: [
+      "Evita responder con nuevos rumores o publicaciones. Explica la situación a tu tutor o a un adulto de confianza y pide que ayude a detener la difusión.",
+      "Si los rumores están en un chat, conserva la información relevante sin reenviarla a otros grupos y muéstrala solo a un adulto que pueda intervenir.",
+      "Habla con una persona que te conozca y te respete para no quedarte aislado mientras el colegio revisa lo ocurrido."
+    ],
+    questions: [
+      "¿Los rumores se están difundiendo en el salón, en redes o en ambos lugares?",
+      "¿Ya hay un adulto de confianza que sepa cómo te está afectando?"
+    ]
+  },
+  social_exclusion: {
+    openings: [
+      "Sentirse apartado de un grupo puede doler mucho, especialmente cuando sucede todos los días. Tu necesidad de pertenecer y ser tratado con respeto es válida.",
+      "Lamento que te estén dejando de lado. No tienes que ganarte un lugar aceptando burlas o malos tratos."
+    ],
+    validations: [
+      "Que un grupo te excluya no significa que haya algo malo en ti ni que no puedas encontrar amistades respetuosas.",
+      "Mereces participar y aprender sin que te hagan sentir invisible o indeseado."
+    ],
+    actions: [
+      "Acércate a un compañero con quien te sientas cómodo y propón trabajar juntos; también puedes pedir al docente que organice los grupos de manera inclusiva.",
+      "Cuéntale a tu tutor si la exclusión es repetida o intencional, sobre todo si se combina con burlas, amenazas o aislamiento.",
+      "Busca actividades o espacios del colegio donde puedas conectar con personas que compartan tus intereses y te traten bien."
+    ],
+    questions: [
+      "¿Te dejan fuera de una actividad concreta o sientes que el grupo te evita de manera constante?",
+      "¿Hay algún compañero con quien sí te sientas cómodo hablando?"
+    ]
+  },
+  nicknames_humiliation: {
+    openings: [
+      "Los apodos que te hacen sentir humillado no son inofensivos solo porque otros digan que están bromeando.",
+      "Lamento que estén usando palabras para hacerte sentir menos. Tu nombre y tu identidad merecen respeto."
+    ],
+    validations: [
+      "No tienes que reírte de un apodo que te duele para que los demás te acepten.",
+      "Que otras personas normalicen una burla no significa que tengas que soportarla. Puedes pedir que se detenga."
+    ],
+    actions: [
+      "Dilo de forma breve y firme solo si te sientes seguro: «No me llames así; no me gusta». Después informa a un adulto si continúa.",
+      "Si ocurre delante del salón, pide a tu tutor que intervenga y deje claro que los apodos ofensivos no son aceptables.",
+      "Si se repite, anota cuándo ocurre y quiénes estaban presentes para explicarlo con claridad a una persona adulta."
+    ],
+    questions: [
+      "¿Ese apodo se repite aunque ya hayas pedido que dejen de usarlo?",
+      "¿Sucede más en clase, en el recreo o en un chat?"
+    ]
+  },
+  bullying_general: {
+    openings: [
+      "Gracias por contarlo. Cuando alguien te hostiga o te trata mal repetidamente, es importante que el colegio lo sepa y actúe.",
+      "No tienes que acostumbrarte a que te hagan sentir mal. Vamos a pensar en pasos seguros para que recibas apoyo."
+    ],
+    validations: [
+      "El acoso no es responsabilidad de quien lo recibe y no se detiene necesariamente por aguantarlo en silencio.",
+      "Mereces estudiar en un espacio donde puedas participar sin miedo a las burlas o intimidaciones."
+    ],
+    actions: [
+      "Cuenta lo ocurrido a tu tutor, a Convivencia Escolar o a tu familia. Explica qué pasa, dónde sucede y si se ha repetido.",
+      "Pide que el colegio acuerde medidas concretas para evitar nuevos episodios y que te indique a qué adulto acudir si vuelve a ocurrir.",
+      "Si hay testigos, puedes mencionar quiénes estuvieron presentes sin pedirles que se enfrenten a nadie. La intervención debe quedar a cargo de adultos responsables."
+    ],
+    questions: [
+      "¿Ya se lo has contado a alguien del colegio que pueda intervenir?",
+      "¿Qué momento del día te resulta más difícil por esta situación?"
+    ]
+  },
+  loneliness_emotional: {
+    openings: [
+      "Siento que estés atravesando un momento de tanta soledad. Lo que sientes merece compañía y atención, no críticas.",
+      "Gracias por poner en palabras cómo te encuentras. No necesitas aparentar que todo está bien para merecer apoyo."
+    ],
+    validations: [
+      "Sentirte solo ahora no significa que siempre vaya a ser así ni que no existan personas capaces de escucharte.",
+      "No eres una carga por necesitar compañía. Pedir que alguien te escuche es una necesidad humana válida."
+    ],
+    actions: [
+      "Elige a una persona segura y dile algo sencillo: «Últimamente me he sentido solo y me ayudaría que conversemos un rato».",
+      "Busca un espacio acompañado durante el día, como una actividad escolar, biblioteca, taller o grupo donde puedas compartir un interés.",
+      "Si esta tristeza se mantiene o afecta tus actividades, habla con un familiar protector, el psicólogo escolar o un profesional de salud."
+    ],
+    questions: [
+      "¿Hay alguien con quien te resulte un poco más fácil conversar, aunque todavía no le hayas contado cómo te sientes?",
+      "¿Te has sentido así solo últimamente o desde hace bastante tiempo?"
+    ]
+  },
+  peer_conflict: {
+    openings: [
+      "Los problemas entre amigos pueden sentirse muy intensos cuando una amistad te importa. Podemos separar lo que ocurrió de lo que necesitas ahora.",
+      "Gracias por contármelo. Un desacuerdo no tiene por qué convertirse en insultos, presión o amenazas."
+    ],
+    validations: [
+      "Puedes reconocer un error propio sin aceptar que otra persona te humille o te presione.",
+      "Una amistad sana permite decir que no, expresar molestias y tener opiniones diferentes."
+    ],
+    actions: [
+      "Piensa qué necesitas que cambie y comunícalo con una frase concreta, sin insultar ni publicar indirectas en redes.",
+      "Si la conversación se vuelve agresiva, toma distancia y pide apoyo de un tutor o mediador adulto en lugar de continuar la discusión.",
+      "Si tus amigos te presionan para hacer algo que no quieres, puedes responder «No voy a hacerlo» y acercarte a personas que respeten tu decisión."
+    ],
+    questions: [
+      "¿Quieres resolver un malentendido o necesitas poner un límite porque te están tratando mal?",
+      "¿La otra persona suele escuchar cuando le explicas cómo te sientes?"
+    ]
+  },
+  helping_friend: {
+    openings: [
+      "Tu preocupación puede marcar una diferencia para esa persona. Lo más útil es acompañarla sin presionarla ni intentar resolverlo todo tú solo.",
+      "Es positivo que quieras intervenir con cuidado. La ayuda más segura combina escucha, compañía y apoyo de adultos responsables."
+    ],
+    validations: [
+      "No tienes que convertirte en investigador ni enfrentarte al grupo que agrede a tu amigo para demostrar que te importa.",
+      "Puedes respetar su confianza y, al mismo tiempo, avisar a un adulto cuando exista un riesgo serio para su seguridad."
+    ],
+    actions: [
+      "Pregúntale qué tipo de compañía necesita y ofrécele ir con él o ella a hablar con un tutor o psicólogo del colegio.",
+      "Si presencias una agresión, prioriza pedir ayuda a un docente. No intervengas físicamente ni te pongas en peligro.",
+      "No compartas capturas, rumores ni videos de lo ocurrido. Entrega la información directamente a un adulto que pueda proteger a tu compañero."
+    ],
+    questions: [
+      "¿Tu amigo sabe que estás dispuesto a acompañarlo a pedir ayuda?",
+      "¿Has visto una situación de riesgo o te lo contó en privado?"
+    ]
+  },
+  how_to_ask_help: {
+    openings: [
+      "Podemos convertir ese primer paso en algo más sencillo. No necesitas encontrar las palabras perfectas para pedir apoyo.",
+      "Buscar a un adulto seguro puede darte respaldo y ayudarte a no llevar esta situación en soledad."
+    ],
+    validations: [
+      "Puedes pedir ayuda aunque no tengas pruebas, aunque estés confundido o aunque todavía no sepas cómo explicar todo.",
+      "Si una persona adulta no te escucha, está bien volver a intentarlo con otra persona que sí pueda actuar."
+    ],
+    actions: [
+      "Puedes enviar este mensaje: «Necesito hablar contigo sobre algo que me preocupa. Me cuesta explicarlo, pero necesito que me escuches y me ayudes».",
+      "Pide que te acompañen durante la conversación si te da miedo hablar a solas. También puedes entregar una nota o mostrar un mensaje escrito.",
+      "Empieza contando solo lo esencial: qué te preocupa, si estás en riesgo ahora y qué tipo de ayuda necesitas para sentirte seguro."
+    ],
+    questions: [
+      "¿Te sería más sencillo pedir ayuda por mensaje o conversando cara a cara con esa persona?",
+      "¿Ya tienes en mente a un adulto que te escuche sin culparte?"
+    ]
+  },
+  educational_info: {
+    explanations: [
+      "Una señal importante de acoso es que la conducta no se detiene cuando la otra persona expresa que le incomoda, y puede existir una diferencia de poder que dificulta defenderse. Para valorar un caso conviene mirar qué ocurrió, si se repite y cómo afecta al estudiante.",
+      "El ciberacoso puede continuar fuera del horario escolar porque los mensajes y publicaciones llegan al teléfono en distintos momentos. Por eso es útil combinar el reporte a la plataforma con el apoyo de la familia y del colegio."
+    ],
+    guidance: [
+      "Una intervención adecuada no consiste en culpar a quien recibe el acoso ni en obligarlo a reconciliarse inmediatamente. Primero se debe detener la conducta, escuchar a las personas afectadas y garantizar protección.",
+      "Quienes observan una situación pueden ayudar sin exponerse: no compartir el contenido, acompañar a la persona afectada y comunicar lo ocurrido a un adulto responsable."
+    ],
+    questions: [
+      "¿Quieres conocer las diferencias entre conflicto, broma y acoso, o prefieres revisar un ejemplo concreto?",
+      "¿Te gustaría que te explique qué puede hacer el colegio cuando recibe un reporte de bullying?"
+    ]
+  },
+  general_orientation: {
+    openings: [
+      "Puedes hablar con palabras sencillas; no hace falta ordenar todo antes de empezar. Te responderé con respeto y sin juzgarte.",
+      "Estoy aquí para ayudarte a organizar la situación y distinguir qué pasos podrían ser seguros y útiles."
+    ],
+    validations: [
+      "No necesitas compartir datos que te identifiquen para recibir orientación.",
+      "Una duda pequeña también merece una respuesta clara; no tienes que esperar a que algo se vuelva grave para pedir apoyo."
+    ],
+    actions: [
+      "Puedo ayudarte a preparar un mensaje para un familiar, un tutor o una persona adulta de confianza si te resulta difícil empezar la conversación.",
+      "Cuando me cuentes lo que ocurre, puedo darte pasos concretos según si sucede en el colegio, en casa o en internet.",
+      "Si se trata de un riesgo inmediato, prioriza buscar a una persona adulta presente o un servicio de emergencia en lugar de esperar una respuesta del chat."
+    ],
+    questions: [
+      "¿Qué parte de la situación te gustaría resolver primero?",
+      "¿Buscas información, un consejo práctico o ayuda para comunicarlo a una persona adulta?"
+    ]
+  },
+  greetings: [
+    "¡Hola! 💙 Soy Lumy. Puedes consultarme sobre convivencia escolar, bullying, amistades, redes sociales o cómo pedir ayuda de forma segura. ¿Qué necesitas hoy?",
+    "¡Buenas! Estoy aquí para orientarte sin juzgarte. Cuéntame qué tema tienes en mente y veremos opciones claras y seguras."
+  ],
+  gratitude: [
+    "Me alegra que esta conversación te haya servido. 💙 Recuerda que el apoyo de una persona adulta de confianza también es importante cuando algo te preocupa.",
+    "Gracias por confiar en este espacio. Cuida de ti y busca acompañamiento presencial cuando la situación lo necesite."
+  ],
+  farewells: [
+    "Hasta luego. 💙 Recuerda que mereces respeto y que puedes pedir apoyo a una persona adulta segura cuando lo necesites.",
+    "Cuídate. Si algo te hace sentir en peligro, busca ayuda presencial de inmediato y no dependas solo del chat."
+  ]
+};
+
+function mergeVariantArrays(target, additions) {
+  if (Array.isArray(target) && Array.isArray(additions)) {
+    const known = new Set(target.map(item => normalizeRaw(item)));
+    for (const item of additions) {
+      const normalized = normalizeRaw(item);
+      if (normalized && !known.has(normalized)) {
+        target.push(item);
+        known.add(normalized);
+      }
+    }
+    return;
+  }
+
+  if (!target || !additions || typeof target !== "object" || typeof additions !== "object") {
+    return;
+  }
+
+  for (const [key, value] of Object.entries(additions)) {
+    if (Object.prototype.hasOwnProperty.call(target, key)) {
+      mergeVariantArrays(target[key], value);
+    }
+  }
+}
+
+for (const [category, additions] of Object.entries(EXTRA_RESPONSE_VARIANTS)) {
+  if (RESPONSE_BANKS[category]) {
+    mergeVariantArrays(RESPONSE_BANKS[category], additions);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // 9. COMPOSICIÓN MODULAR COHERENTE Y CONTEXTUAL
 // -----------------------------------------------------------------------------
 function buildContextualBridge(ctx, intent) {
@@ -1544,7 +1994,7 @@ function selectResourceNote(intent, ctx) {
 export function respond(messages = []) {
   const ctx = analyzeContext(messages);
   const intent = classifyIntent(ctx);
-  const lastAssistant = ctx.assistantMessages[ctx.assistantMessages.length - 1] || "";
+  const recentAssistantTexts = ctx.assistantMessages.slice(-8);
 
   const conversationFingerprint = messages
     .slice(-8)
@@ -1557,16 +2007,16 @@ export function respond(messages = []) {
   // ---------------------------------------------------------------------------
   if (intent.category === "sexual_violence_protocol") {
     const bank = RESPONSE_BANKS.sexual_violence_protocol;
-    const part1 = pickVariant(bank.recognitionAndNoBlame, seed, "sv-rec", lastAssistant);
+    const part1 = pickVariant(bank.recognitionAndNoBlame, seed, "sv-rec", recentAssistantTexts);
     const groomingNote =
       intent.subType === "grooming_or_sextortion"
-        ? pickVariant(bank.groomingSpecificAdvice, seed, "sv-groom", lastAssistant)
+        ? pickVariant(bank.groomingSpecificAdvice, seed, "sv-groom", recentAssistantTexts)
         : "";
-    const part2 = pickVariant(bank.medicalAndSafetyUrgent, seed, "sv-med", lastAssistant);
+    const part2 = pickVariant(bank.medicalAndSafetyUrgent, seed, "sv-med", recentAssistantTexts);
     const adultOptions =
       bank.trustedAdultByContext[intent.aggressorContext] || bank.trustedAdultByContext.other;
-    const part3 = pickVariant(adultOptions, seed, "sv-adult", lastAssistant);
-    const part4 = pickVariant(bank.privacyAndSimplePhrase, seed, "sv-priv", lastAssistant);
+    const part3 = pickVariant(adultOptions, seed, "sv-adult", recentAssistantTexts);
+    const part4 = pickVariant(bank.privacyAndSimplePhrase, seed, "sv-priv", recentAssistantTexts);
 
     return [
       part1,
@@ -1586,8 +2036,8 @@ export function respond(messages = []) {
   if (intent.category === "self_harm_crisis") {
     const bank = RESPONSE_BANKS.self_harm_crisis;
     return [
-      pickVariant(bank.openings, seed, "sh-open", lastAssistant),
-      pickVariant(bank.safetyAction, seed, "sh-act", lastAssistant),
+      pickVariant(bank.openings, seed, "sh-open", recentAssistantTexts),
+      pickVariant(bank.safetyAction, seed, "sh-act", recentAssistantTexts),
       OFFICIAL_RESOURCES.mentalHealthPeru,
       OFFICIAL_RESOURCES.emergencyPeru
     ].join("\n\n");
@@ -1599,8 +2049,8 @@ export function respond(messages = []) {
   if (intent.category === "immediate_danger") {
     const bank = RESPONSE_BANKS.immediate_danger;
     return [
-      pickVariant(bank.openings, seed, "id-open", lastAssistant),
-      pickVariant(bank.urgentSteps, seed, "id-step", lastAssistant),
+      pickVariant(bank.openings, seed, "id-open", recentAssistantTexts),
+      pickVariant(bank.urgentSteps, seed, "id-step", recentAssistantTexts),
       OFFICIAL_RESOURCES.emergencyPeru
     ].join("\n\n");
   }
@@ -1609,15 +2059,15 @@ export function respond(messages = []) {
   // CASO D: SALUDOS, AGRADECIMIENTOS Y DESPEDIDAS
   // ---------------------------------------------------------------------------
   if (intent.category === "greeting") {
-    return pickVariant(RESPONSE_BANKS.greetings, seed, "greet", lastAssistant);
+    return pickVariant(RESPONSE_BANKS.greetings, seed, "greet", recentAssistantTexts);
   }
 
   if (intent.category === "gratitude_closing") {
-    return pickVariant(RESPONSE_BANKS.gratitude, seed, "thanks", lastAssistant);
+    return pickVariant(RESPONSE_BANKS.gratitude, seed, "thanks", recentAssistantTexts);
   }
 
   if (intent.category === "farewell") {
-    return pickVariant(RESPONSE_BANKS.farewells, seed, "bye", lastAssistant);
+    return pickVariant(RESPONSE_BANKS.farewells, seed, "bye", recentAssistantTexts);
   }
 
   // ---------------------------------------------------------------------------
@@ -1626,12 +2076,12 @@ export function respond(messages = []) {
   if (intent.category === "educational_info") {
     const bank = RESPONSE_BANKS.educational_info;
     const parts = [
-      pickVariant(bank.explanations, seed, "edu-exp", lastAssistant),
-      pickVariant(bank.guidance, seed, "edu-gui", lastAssistant),
+      pickVariant(bank.explanations, seed, "edu-exp", recentAssistantTexts),
+      pickVariant(bank.guidance, seed, "edu-gui", recentAssistantTexts),
       OFFICIAL_RESOURCES.schoolBullyingPeru
     ];
     if (!ctx.asksDirectAction) {
-      parts.push(pickVariant(bank.questions, seed, "edu-q", lastAssistant));
+      parts.push(pickVariant(bank.questions, seed, "edu-q", recentAssistantTexts));
     }
     return parts.join("\n\n");
   }
@@ -1641,9 +2091,9 @@ export function respond(messages = []) {
   // ---------------------------------------------------------------------------
   const bank = RESPONSE_BANKS[intent.category] || RESPONSE_BANKS.general_orientation;
   const bridge = buildContextualBridge(ctx, intent);
-  const opening = pickVariant(bank.openings, seed, `${intent.category}-open`, lastAssistant);
-  const validation = pickVariant(bank.validations, seed, `${intent.category}-val`, lastAssistant);
-  const action1 = pickVariant(bank.actions, seed, `${intent.category}-act1`, lastAssistant);
+  const opening = pickVariant(bank.openings, seed, `${intent.category}-open`, recentAssistantTexts);
+  const validation = pickVariant(bank.validations, seed, `${intent.category}-val`, recentAssistantTexts);
+  const action1 = pickVariant(bank.actions, seed, `${intent.category}-act1`, recentAssistantTexts);
 
   // Si el estudiante pregunta directamente qué hacer ("¿qué hago?", "orientación"),
   // entregamos un segundo consejo práctico complementario y omitimos preguntas innecesarias.
@@ -1653,7 +2103,7 @@ export function respond(messages = []) {
       bank.actions.filter(a => a !== action1),
       seed,
       `${intent.category}-act2`,
-      lastAssistant
+      recentAssistantTexts
     );
   }
 
@@ -1680,7 +2130,7 @@ export function respond(messages = []) {
     );
 
   const closingQuestion = shouldIncludeQuestion
-    ? pickVariant(bank.questions, seed, `${intent.category}-q`, lastAssistant)
+    ? pickVariant(bank.questions, seed, `${intent.category}-q`, recentAssistantTexts)
     : "";
 
   const firstParagraph = [bridge, opening, validation, specificSubNote].filter(Boolean).join(" ");
@@ -1735,7 +2185,7 @@ app.get("/health", (_req, res) =>
   res.json({
     ok: true,
     project: "Lumy",
-    version: "2.0.0",
+    version: "2.1.0",
     chatbot: "lumy-contextual-safety-engine",
     openaiRequired: false,
     categoriesSupported: [
@@ -1766,7 +2216,7 @@ app.get("/health", (_req, res) =>
 // (permite importar `respond` o `app` en baterías de pruebas sin conflicto de puertos)
 if (process.env.LUMY_TEST_MODE !== "1") {
   app.listen(port, () => {
-    console.log(`Lumy v2.0 está funcionando correctamente en el puerto ${port}`);
+    console.log(`Lumy v2.1 está funcionando correctamente en el puerto ${port}`);
   });
 }
 
